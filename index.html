@@ -52,7 +52,7 @@
             <div class="card">
                 <div class="card-body">
                     <div class="text-secondary small">Total cartera</div>
-                    <div class="fs-3 fw-bold" id="grandTotal">—</div>
+                    <div id="grandTotal"><span class="fs-3 fw-bold">—</span></div>
                 </div>
             </div>
         </div>
@@ -167,8 +167,20 @@ function loadData() {
 }
 
 function render(data) {
-    var grandTotal = data.grand_total || 0;
-    document.getElementById('grandTotal').textContent = formatCurrency(grandTotal, 'USD');
+    // Totals are kept per currency (never summed together — a USD balance
+    // and an ARS balance aren't the same unit).
+    var totals = data.totals || {};
+    var currencies = Object.keys(totals).sort(function(a, b) {
+        if (a === 'USD') return -1;
+        if (b === 'USD') return 1;
+        return a.localeCompare(b);
+    });
+    document.getElementById('grandTotal').innerHTML = currencies.length
+        ? currencies.map(function(c) {
+              return '<div class="fs-4 fw-bold">' + formatCurrency(totals[c], c) +
+                  ' <span class="text-secondary fs-6">' + c + '</span></div>';
+          }).join('')
+        : '<span class="fs-3 fw-bold">—</span>';
 
     var brokerNames = Object.keys(data.brokers);
     document.getElementById('brokerCount').textContent = brokerNames.length;
@@ -190,7 +202,7 @@ function render(data) {
     brokerNames.forEach(function(broker) {
         var holdings = data.brokers[broker].holdings;
         holdings.forEach(function(h, i) {
-            var pct = grandTotal > 0 ? (h.value / grandTotal * 100) : 0;
+            var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
             var tr = document.createElement('tr');
             var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>' : '';
             var priceStr = h.price > 0
@@ -253,7 +265,7 @@ function render(data) {
         var bd = data.brokers[broker];
         var rows = '';
         bd.holdings.forEach(function(h) {
-            var pct = grandTotal > 0 ? (h.value / grandTotal * 100) : 0;
+            var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
             var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
             rows += '<tr>' +
                 '<td>' + h.ticker + '</td>' +
@@ -263,13 +275,16 @@ function render(data) {
                 '<td class="text-end">' + pct.toFixed(1) + '%</td>' +
                 '</tr>';
         });
+        var brokerTotals = Object.keys(bd.totals).map(function(c) {
+            return formatCurrency(bd.totals[c], c);
+        }).join(' + ');
         var card = document.createElement('div');
         card.className = 'col-md-6';
         card.innerHTML =
             '<div class="card">' +
             '<div class="card-header d-flex justify-content-between">' +
             '<span>' + broker + '</span>' +
-            '<span class="text-info">' + formatCurrency(bd.total_value, 'USD') + '</span>' +
+            '<span class="text-info">' + brokerTotals + '</span>' +
             '</div>' +
             '<div class="card-body p-0">' +
             '<div class="table-responsive" style="max-height: 300px; overflow-y: auto;">' +

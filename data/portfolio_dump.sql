@@ -53,7 +53,7 @@ INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear
 INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('VIST','Vista Energy SAB de CV',12.0,'Energía','BECA Vestiva',NULL,0,0,'2026-07-23 23:42:28');
 INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('IBM','International Business Machines Corp',18.0,'Tecnología','Balanz',NULL,1,0,'2026-07-23 23:44:59');
 
-CREATE TABLE prices (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, price REAL NOT NULL, currency TEXT DEFAULT 'USD', recorded_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE prices (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, price REAL NOT NULL, currency TEXT DEFAULT 'USD', recorded_at TEXT DEFAULT (datetime('now')), is_cedear INTEGER DEFAULT 0);
 
 INSERT INTO prices (id,ticker,price,currency,recorded_at) VALUES (1,'AMD',541.52,'USD','2026-07-21 17:14:24');
 INSERT INTO prices (id,ticker,price,currency,recorded_at) VALUES (2,'AMZN',248.045,'USD','2026-07-21 17:14:24');

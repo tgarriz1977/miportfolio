@@ -79,13 +79,14 @@ portfolio-dashboard/
 
 ### prices
 
-| Columna     | Tipo     | Descripción                     |
-|------------|----------|---------------------------------|
-| id         | INTEGER  | PK autoincremental              |
-| ticker     | TEXT     | Símbolo (referencia a holdings) |
-| price      | REAL     | Precio de cierre                |
-| currency   | TEXT     | USD o ARS                       |
-| recorded_at| TEXT     | Timestamp de la cotización      |
+| Columna     | Tipo     | Descripción                                                     |
+|------------|----------|-------------------------------------------------------------------|
+| id         | INTEGER  | PK autoincremental                                              |
+| ticker     | TEXT     | Símbolo (referencia a holdings)                                 |
+| price      | REAL     | Precio de cierre                                                 |
+| currency   | TEXT     | USD o ARS                                                        |
+| recorded_at| TEXT     | Timestamp de la cotización                                       |
+| is_cedear  | INTEGER  | 1 si el precio corresponde al CEDEAR (ARS), no a la acción directa (USD) — junto con `ticker` identifica de forma única qué instrumento cotiza, ya que un mismo ticker puede tener versión directa y CEDEAR |
 
 ### Restaurar desde dump
 
@@ -95,12 +96,14 @@ sqlite3 data/portfolio.db < data/portfolio_dump.sql
 
 ## Mapa de tickers a Yahoo Finance
 
-| Origen          | Ticker local | Yahoo Finance   | Moneda |
-|----------------|-------------|-----------------|--------|
-| BECA Vestiva   | AMD, MSFT…  | directo (AMD)   | USD    |
-| TM Inversiones | ALUA, PAMP… | +.BA (ALUA.BA)  | ARS    |
-| Balanz         | ALAB, ARM…  | directo (ALAB)  | USD    |
-| Belo           | BTC, ETH    | -USD (BTC-USD)  | USD    |
+| Origen                  | Ticker local | Yahoo Finance     | Moneda |
+|------------------------|-------------|-------------------|--------|
+| Acción directa (`is_cedear=0`, ej. BECA Vestiva) | AMD, MSFT…  | directo (AMD)     | USD    |
+| Acción argentina en BYMA (`is_cedear=0`, ej. TM Inversiones) | ALUA, PAMP… | +.BA (ALUA.BA)    | ARS    |
+| CEDEAR (`is_cedear=1`, ej. TM Inversiones, Balanz) | ALAB, AMD…  | +.BA (ALAB.BA)    | ARS    |
+| Crypto (Belo)           | BTC, ETH    | -USD (BTC-USD)    | USD    |
+
+Un mismo ticker (ej. `AMD`) puede tener versión directa en un broker y CEDEAR en otro — son instrumentos distintos con precio y moneda distintos, resueltos por `is_cedear` (ver `resolve_yf_symbol()` en `app.py`), no por el ticker solo.
 
 ## Desarrollo local (sin Docker)
 
