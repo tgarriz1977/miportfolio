@@ -11,3 +11,16 @@ services:
       - PORTFOLIO_DB=/data/portfolio.db
       - HOST=0.0.0.0
       - PORT=5050
+      # Módulo de análisis. Sin LLM_PROVIDER el panel igual muestra noticias
+      # y balances; solo queda sin el resumen redactado.
+      #
+      # Modelo local (Ollama en el host, no en este contenedor):
+      # - LLM_PROVIDER=openai_compat
+      # - LLM_MODEL=llama3
+      # - LLM_BASE_URL=http://host.docker.internal:11434/v1
+      #
+      # Anthropic:
+      # - LLM_PROVIDER=anthropic
+      # - LLM_API_KEY=sk-ant-...
+      #
+      # - INSIGHT_TTL_HOURS=6

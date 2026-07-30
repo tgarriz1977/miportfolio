@@ -1,22 +1,25 @@
 # Portfolio Dashboard
 
-Panel web auto-actualizable para visualizar tenencias de acciones agrupadas por broker, con gráfico de torta y precios en vivo desde Yahoo Finance.
+Panel web auto-actualizable para visualizar tenencias de acciones agrupadas por broker, con precios en vivo desde Yahoo Finance y un módulo de análisis por ticker basado en modelos de lenguaje.
 
 ## Stack
 
 - **Backend:** Python + Flask
 - **Frontend:** Bootstrap 5 (dark mode) + Chart.js
-- **Precios:** Yahoo Finance (vía `yfinance`)
+- **Precios y datos:** Yahoo Finance (vía `yfinance`)
+- **Análisis:** Anthropic, Gemini o cualquier modelo local compatible con OpenAI
 - **Datos:** SQLite (`portfolio.db`)
 - **Infra:** Docker Compose
 
 ## Funcionalidades
 
 -   **Auto-actualización** — Al entrar al panel o presionar "Actualizar precios", obtiene cotizaciones vía Yahoo Finance para todos los tickers.
--   **Gráfico de torta** — Distribución porcentual del portfolio agregando el mismo ticker a través de todos los brokers.
--   **Tabla de tenencias** — Ticker, empresa, broker, cantidad de shares, precio, valor total y porcentaje.
+-   **Totales separados por moneda** — La cartera se reporta en ARS y en USD por separado, nunca sumados entre sí. Un saldo en pesos y uno en dólares no son la misma unidad.
+-   **Gráfico por categoría** — Cuatro pestañas (CEDEARs, Acciones USA, Acciones BA, Crypto), cada una de una sola moneda, así las porciones son comparables entre sí. Clickear una porción filtra el panel de detalle.
+-   **Tabla de tenencias ordenable** — Ticker, empresa, broker, shares, precio, valor y porcentaje, con ordenamiento por cualquier columna.
+-   **Links a TradingView** — Cada ticker abre el gráfico del instrumento correcto: un CEDEAR abre su gráfico en pesos de BYMA, la acción directa abre el de EE.UU. en dólares.
+-   **Análisis por ticker** — Noticias recientes, fecha del próximo balance e historial de resultados, con un resumen redactado por el modelo que configures. Ver [Módulo de análisis](#módulo-de-análisis).
 -   **Cards por broker** — Desglose individual de cada broker con sus propias tablas y subtotales.
--   **Resumen** — Total cartera, cantidad de brokers, tickers y precios actualizados.
 -   **Multi-activo** — Soporta acciones US, acciones argentinas (BYMA, con sufijo `.BA`), CEDEARs, y crypto (BTC/ETH).
 
 ## Requisitos
@@ -42,14 +45,19 @@ Abrir [http://localhost:5050](http://localhost:5050)
 
 ```
 portfolio-dashboard/
-├── app.py                  # Backend Flask
+├── app.py                  # Backend Flask: rutas, precios, caché
+├── sources.py              # Noticias y balances (independiente del modelo)
+├── llm.py                  # Proveedor de modelo intercambiable
 ├── index.html              # Frontend (Bootstrap + Chart.js)
 ├── Dockerfile              # Imagen Docker
 ├── docker-compose.yml      # Orquestación
 ├── requirements.txt        # Dependencias Python
+├── requirements-dev.txt    # Dependencias de test
 ├── data/
 │   ├── portfolio.db        # Base SQLite (con precios)
 │   └── portfolio_dump.sql  # Dump SQL de la base
+├── tests/                  # pytest
+├── docs/plans/             # Documentos de diseño
 └── README.md
 ```
 
@@ -60,6 +68,11 @@ portfolio-dashboard/
 | `PORTFOLIO_DB` | `/data/portfolio.db` | Ruta a la base SQLite          |
 | `HOST`        | `0.0.0.0`            | Interfaz de red del servidor    |
 | `PORT`        | `5050`               | Puerto del servidor             |
+| `LLM_PROVIDER` | *(sin default)*     | `anthropic` o `openai_compat`. Sin definir, el análisis queda deshabilitado |
+| `LLM_MODEL`   | `claude-opus-5` (solo Anthropic) | Identificador del modelo |
+| `LLM_BASE_URL` | —                   | Endpoint, requerido por `openai_compat` |
+| `LLM_API_KEY` | —                    | Credencial, si el proveedor la pide |
+| `INSIGHT_TTL_HOURS` | `6`            | Vida de la caché de análisis    |
 
 ## Base de datos
 
@@ -88,6 +101,16 @@ portfolio-dashboard/
 | recorded_at| TEXT     | Timestamp de la cotización                                       |
 | is_cedear  | INTEGER  | 1 si el precio corresponde al CEDEAR (ARS), no a la acción directa (USD) — junto con `ticker` identifica de forma única qué instrumento cotiza, ya que un mismo ticker puede tener versión directa y CEDEAR |
 
+### insights
+
+Caché del módulo de análisis. La clave es el **símbolo resuelto de la empresa**, no el ticker local, así el CEDEAR de AMD y las acciones directas comparten una sola entrada y una sola llamada al modelo.
+
+| Columna     | Tipo     | Descripción                     |
+|------------|----------|---------------------------------|
+| symbol     | TEXT PK  | Símbolo resuelto (ver más abajo)|
+| payload    | TEXT     | Respuesta completa en JSON      |
+| created_at | TEXT     | Timestamp, comparado contra `INSIGHT_TTL_HOURS` |
+
 ### Restaurar desde dump
 
 ```bash
@@ -105,6 +128,56 @@ sqlite3 data/portfolio.db < data/portfolio_dump.sql
 
 Un mismo ticker (ej. `AMD`) puede tener versión directa en un broker y CEDEAR en otro — son instrumentos distintos con precio y moneda distintos, resueltos por `is_cedear` (ver `resolve_yf_symbol()` en `app.py`), no por el ticker solo.
 
+## Módulo de análisis
+
+Cada tenencia tiene un botón que abre un panel con noticias recientes, la fecha del próximo balance y el historial de resultados (EPS estimado vs. real y el porcentaje de sorpresa). Todo eso sale de `yfinance` y **no requiere ninguna API key**, así que el panel funciona aunque no configures ningún modelo. Si configurás uno, arriba de esos datos aparece además un resumen redactado.
+
+> El resumen es informativo. El prompt le prohíbe explícitamente al modelo recomendar comprar, vender o mantener, y dar precios objetivo. No es asesoramiento financiero.
+
+### Proveedores
+
+La recolección de datos ocurre en la aplicación, no a través de la búsqueda web integrada de ningún proveedor — porque un modelo local no tiene esa herramienta. Eso es lo que hace que los tres sean intercambiables.
+
+Dos adaptadores cubren todo (`llm.py`):
+
+```bash
+# Modelo local — Ollama, LM Studio, vLLM. Costo cero, sin credencial.
+LLM_PROVIDER=openai_compat
+LLM_MODEL=llama3
+LLM_BASE_URL=http://localhost:11434/v1
+
+# Anthropic
+LLM_PROVIDER=anthropic
+LLM_API_KEY=sk-ant-...
+
+# Gemini, por su endpoint compatible con OpenAI
+LLM_PROVIDER=openai_compat
+LLM_MODEL=gemini-2.0-flash
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+LLM_API_KEY=...
+```
+
+Sin `LLM_PROVIDER` definido, `/api/insight` responde HTTP 503 con un mensaje explicando qué falta, y el panel igual muestra las noticias y los balances. El resto del dashboard no se ve afectado.
+
+### Resolución de símbolo — se invierte respecto de los precios
+
+Para **precios**, un CEDEAR y su acción directa son instrumentos distintos. Para **noticias y balances** son la misma empresa: comparten los mismos resultados trimestrales. Por eso `resolve_insight_symbol()` en `sources.py` resuelve distinto que `resolve_yf_symbol()`:
+
+| Condición | Símbolo | Ejemplo |
+|-----------|---------|---------|
+| Crypto | `{ticker}-USD` | BTC → `BTC-USD` |
+| CEDEAR | `{ticker}` — el subyacente de EE.UU., **no** `.BA` | AMD CEDEAR → `AMD` |
+| Acción argentina | `{ticker}.BA` | ALUA → `ALUA.BA` |
+| Acción de EE.UU. | `{ticker}` | AMD directa → `AMD` |
+
+### Cobertura despareja
+
+Yahoo no cubre todo por igual: `ALUA.BA` no tiene noticias ni fecha de balance (sí fundamentales), y las crypto tienen noticias pero no balances. Cada fuente se resuelve por separado y su ausencia se informa como "sin datos" — nunca aborta la consulta ni se inventa el faltante.
+
+### Fuentes no incluidas
+
+Reddit y YouTube requieren registrar credenciales gratuitas (una app OAuth y una key de Google Cloud). X requiere el plan pago de su API. Ninguna está implementada; la capa de fuentes está preparada para agregarlas como funciones nuevas en `sources.py` sin tocar el resto.
+
 ## Desarrollo local (sin Docker)
 
 ```bash
@@ -112,5 +185,15 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp ~/.hermes/portfolio.db data/
-python3 app.py
+PORTFOLIO_DB=data/portfolio.db python3 app.py
 ```
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                      # todo
+pytest -m "not network"     # sin salir a internet
+```
+
+Los tests marcados `network` consultan Yahoo Finance de verdad — verifican que las fuentes degraden bien cuando un símbolo no tiene cobertura y que el payload sea serializable a JSON (pandas emite `NaN`, que rompe `jsonify`). Los de la ruta usan un proveedor falso, así que no necesitan credenciales.
