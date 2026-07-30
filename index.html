@@ -27,6 +27,8 @@
         .nav-tabs .nav-link.active { color: #6ea8fe; background: transparent; border-bottom-color: #6ea8fe; }
         th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
         th.sortable:hover { color: #9dc4fb; }
+        .ticker-link { color: #6ea8fe; text-decoration: none; }
+        .ticker-link:hover { color: #9dc4fb; text-decoration: underline; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -188,6 +190,21 @@ const CATEGORIES = [
     { key: 'crypto', label: 'Crypto', currency: 'USD',
       match: function(h) { return h.is_crypto; } },
 ];
+
+// TradingView symbol, derived per holding — NEVER from the ticker string
+// alone. A CEDEAR and its underlying US stock share a ticker but are
+// different instruments on different exchanges in different currencies
+// (see resolve_yf_symbol() in app.py for the same distinction).
+function tradingViewSymbol(h) {
+    if (h.is_crypto) return h.ticker + 'USD';
+    if (h.is_cedear || h.currency === 'ARS') return 'BCBA-' + h.ticker;
+    return h.ticker;
+}
+
+function tickerLink(h) {
+    return '<a class="ticker-link" target="_blank" rel="noopener noreferrer" href="' +
+        'https://www.tradingview.com/symbols/' + tradingViewSymbol(h) + '/">' + h.ticker + '</a>';
+}
 
 let lastData = null;
 let activeCategory = 'cedear';
@@ -353,7 +370,7 @@ function renderDetailPanel() {
         var usdVal = h.currency === 'USD' ? formatCurrency(h.value, 'USD') : '—';
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + h.ticker + '</td>' +
+            '<td>' + tickerLink(h) + '</td>' +
             '<td>' + h.company + '</td>' +
             '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
             '<td class="text-end">' + h.shares + '</td>' +
@@ -409,7 +426,7 @@ function renderHoldingsTable() {
             : '<span class="value-neutral">—</span>';
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + h.ticker + cedi + '</td>' +
+            '<td>' + tickerLink(h) + cedi + '</td>' +
             '<td>' + h.company + '</td>' +
             '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
             '<td class="text-end">' + h.shares + '</td>' +
@@ -468,7 +485,7 @@ function render(data) {
             var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
             var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
             rows += '<tr>' +
-                '<td>' + h.ticker + '</td>' +
+                '<td>' + tickerLink(h) + '</td>' +
                 '<td class="text-end">' + h.shares + '</td>' +
                 '<td class="text-end">' + priceStr + '</td>' +
                 '<td class="text-end fw-semibold">' + formatCurrency(h.value, h.currency) + '</td>' +
