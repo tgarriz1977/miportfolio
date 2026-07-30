@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 dump_db.py
 .pytest_cache/
+
+# Credenciales del proveedor de modelo — nunca al repositorio.
+.env

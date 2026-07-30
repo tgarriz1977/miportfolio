@@ -74,6 +74,8 @@ portfolio-dashboard/
 | `LLM_API_KEY` | —                    | Credencial, si el proveedor la pide |
 | `INSIGHT_TTL_HOURS` | `6`            | Vida de la caché de análisis    |
 
+Las cuatro variables `LLM_*` se configuran en un archivo `.env` en la raíz (ver `.env.example`), que está en `.gitignore` para que la API key no entre al repositorio. Docker Compose lo lee solo.
+
 ## Base de datos
 
 ### holdings
@@ -138,24 +140,23 @@ Cada tenencia tiene un botón que abre un panel con noticias recientes, la fecha
 
 La recolección de datos ocurre en la aplicación, no a través de la búsqueda web integrada de ningún proveedor — porque un modelo local no tiene esa herramienta. Eso es lo que hace que los tres sean intercambiables.
 
-Dos adaptadores cubren todo (`llm.py`):
+Dos adaptadores (`llm.py`) cubren los tres casos. La configuración va en un archivo `.env` en la raíz, que está en `.gitignore` para que la API key no entre al repositorio:
 
 ```bash
-# Modelo local — Ollama, LM Studio, vLLM. Costo cero, sin credencial.
-LLM_PROVIDER=openai_compat
-LLM_MODEL=llama3
-LLM_BASE_URL=http://localhost:11434/v1
-
-# Anthropic
-LLM_PROVIDER=anthropic
-LLM_API_KEY=sk-ant-...
-
-# Gemini, por su endpoint compatible con OpenAI
-LLM_PROVIDER=openai_compat
-LLM_MODEL=gemini-2.0-flash
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-LLM_API_KEY=...
+cp .env.example .env
+# editar .env y poner la key
+docker compose up -d
 ```
+
+`.env.example` trae los tres bloques listos para descomentar:
+
+| Proveedor | `LLM_PROVIDER` | `LLM_BASE_URL` | Dónde sacar la key |
+|-----------|----------------|----------------|--------------------|
+| Gemini | `openai_compat` | `https://generativelanguage.googleapis.com/v1beta/openai` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| Anthropic | `anthropic` | — | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| Local (Ollama, LM Studio, vLLM) | `openai_compat` | `http://host.docker.internal:11434/v1` | no lleva |
+
+Desde el contenedor, un modelo local en tu máquina se alcanza por `host.docker.internal`, **no** por `localhost` — `localhost` dentro del contenedor es el contenedor mismo.
 
 Sin `LLM_PROVIDER` definido, `/api/insight` responde HTTP 503 con un mensaje explicando qué falta, y el panel igual muestra las noticias y los balances. El resto del dashboard no se ve afectado.
 
@@ -202,9 +203,14 @@ Los tests marcados `network` consultan Yahoo Finance de verdad — verifican que
 
 ### Verificación pendiente
 
-**La llamada real al modelo nunca se ejecutó de punta a punta.** El módulo de análisis se desarrolló sin credencial ni modelo local disponible, así que `AnthropicProvider.summarize()` y `OpenAICompatProvider.summarize()` están cubiertos por tests unitarios de configuración, pero nunca hablaron con un proveedor real. Lo primero al configurar uno es abrir el panel de cualquier ticker y confirmar que el resumen aparece y respeta las reglas del prompt (que no recomiende comprar ni vender).
+**Falta ejecutar una llamada autenticada real.** El módulo se desarrolló sin credencial disponible. Lo que sí está verificado contra Gemini con una key inválida: el adaptador arma bien la URL, manda el request en el formato correcto y Gemini responde `"Please pass a valid API key"` — es decir, todo el camino funciona salvo la credencial.
 
-Es lo más probable que falle y lo más rápido de verificar.
+Lo que queda por confirmar al configurar una key de verdad:
+
+1. Que el resumen aparezca en el panel.
+2. Que respete las reglas del prompt — sobre todo que **no recomiende comprar ni vender**, que es la regla que más importa y la que un modelo puede desobedecer.
+
+Si el resumen sale con recomendaciones, el arreglo va en `SYSTEM_PROMPT` (`llm.py`), no en la UI.
 
 ### Fuentes de datos pendientes
 
