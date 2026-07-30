@@ -52,6 +52,7 @@ INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear
 INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('ETH','Ethereum',0.0553906,'Cryptocurrency','Belo',NULL,0,1,'2026-07-21 17:28:13');
 INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('VIST','Vista Energy SAB de CV',12.0,'Energía','BECA Vestiva',NULL,0,0,'2026-07-23 23:42:28');
 INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('IBM','International Business Machines Corp',18.0,'Tecnología','Balanz',NULL,1,0,'2026-07-23 23:44:59');
+INSERT INTO holdings (ticker,company,shares,sector,broker,cedear_ratio,is_cedear,is_crypto,updated_at) VALUES ('JPM','CEDEAR JPMORGAN CHASE & CO',16.0,'Servicios Financieros','Balanz',NULL,1,0,'2026-07-30 17:14:00');
 
 CREATE TABLE prices (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, price REAL NOT NULL, currency TEXT DEFAULT 'USD', recorded_at TEXT DEFAULT (datetime('now')), is_cedear INTEGER DEFAULT 0);
 
