@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+        body { padding-top: 1.5rem; background: #0f1923; color: #d0dae6; }
+        .card { border: 1px solid #1e2d3d; background: #15202b; border-radius: .75rem; }
+        .card-header { background: #1a2c3d; border-bottom: 1px solid #1e2d3d; font-weight: 600; }
+        .table { --bs-table-bg: transparent; --bs-table-color: #d0dae6; margin-bottom: 0; }
+        .table th { border-color: #1e2d3d; color: #6ea8fe; }
+        .table td { border-color: #1e2d3d; }
+        .badge-broker { background: #2d4a6e; color: #a8c8f0; }
+        .badge-cedear { background: #6c757d; color: #e9ecef; }
+        .refresh-btn { cursor: pointer; }
+        .refresh-btn.spinning { animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .last-updated { color: #6c8aa0; font-size: .85rem; }
+        .pie-container { max-height: 420px; }
+        .value-up { color: #4ade80; }
+        .value-neutral { color: #d0dae6; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #15202b; }
+        ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="container-lg">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="mb-0">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6ea8fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v20M17 5l-5-3-5 3M3 8l4-2 5 3 4-2 4 2M5 14v-4M9 14v-4M15 14v-4M19 14v-4M3 22h18"/>
+            </svg>
+            Portfolio
+        </h3>
+        <div>
+            <span class="last-updated me-3" id="updateTime"></span>
+            <button class="btn btn-outline-info btn-sm refresh-btn" onclick="refreshPrices()" id="refreshBtn">
+                &#x21bb; Actualizar precios
+            </button>
+        </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-3" id="summaryCards">
+        <div class="col-md-6 col-lg-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-secondary small">Total cartera</div>
+                    <div class="fs-3 fw-bold" id="grandTotal">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-lg-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-secondary small">Brokers</div>
+                    <div class="fs-3 fw-bold" id="brokerCount">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-lg-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-secondary small">Tickers</div>
+                    <div class="fs-3 fw-bold" id="tickerCount">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-lg-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-secondary small">Precios actualizados</div>
+                    <div class="fs-3 fw-bold" id="priceCount">—</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main content: pie chart + holdings table -->
+    <div class="row g-3">
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header">Distribucion por ticker</div>
+                <div class="card-body pie-container d-flex align-items-center justify-content-center">
+                    <canvas id="pieChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header">Tenencias</div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-sm table-hover mb-0" id="holdingsTable">
+                            <thead class="sticky-top" style="background: #15202b;">
+                                <tr>
+                                    <th>Ticker</th>
+                                    <th>Empresa</th>
+                                    <th>Broker</th>
+                                    <th class="text-end">Shares</th>
+                                    <th class="text-end">Precio</th>
+                                    <th class="text-end">Valor</th>
+                                    <th class="text-end">%</th>
+                                </tr>
+                            </thead>
+                            <tbody id="holdingsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Broker breakdown cards -->
+    <div class="row g-3 mt-2" id="brokerCards"></div>
+
+</div>
+
+<script>
+let pieChart = null;
+const COLORS = [
+    '#6ea8fe', '#4ade80', '#facc15', '#f87171', '#c084fc',
+    '#22d3ee', '#fb923c', '#a78bfa', '#34d399', '#f472b6',
+    '#38bdf8', '#e879f9', '#fbbf24', '#60a5fa', '#86efac',
+    '#fca5a5', '#d8b4fe', '#67e8f9', '#fdba74', '#c4b5fd',
+];
+
+function formatCurrency(val, cur) {
+    if (cur === 'ARS') {
+        return '$' + val.toLocaleString('es-AR', { minimumFractionDigits: 2 });
+    }
+    return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+function refreshPrices() {
+    const btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+    btn.disabled = true;
+    btn.textContent = 'Actualizando...';
+
+    fetch('/api/refresh')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loadData();
+            document.getElementById('updateTime').textContent =
+                'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
+        })
+        .catch(function(e) { console.error(e); })
+        .finally(function() {
+            btn.classList.remove('spinning');
+            btn.disabled = false;
+            btn.textContent = '\u21bb Actualizar precios';
+        });
+}
+
+function loadData() {
+    fetch('/api/portfolio?refresh=true')
+        .then(function(r) { return r.json(); })
+        .then(function(data) { render(data); })
+        .catch(function(e) { console.error('Error loading portfolio:', e); });
+}
+
+function render(data) {
+    var grandTotal = data.grand_total || 0;
+    document.getElementById('grandTotal').textContent = formatCurrency(grandTotal, 'USD');
+
+    var brokerNames = Object.keys(data.brokers);
+    document.getElementById('brokerCount').textContent = brokerNames.length;
+
+    var totalTickers = 0;
+    var pricesFound = 0;
+    brokerNames.forEach(function(b) {
+        data.brokers[b].holdings.forEach(function(h) {
+            totalTickers++;
+            if (h.price > 0) pricesFound++;
+        });
+    });
+    document.getElementById('tickerCount').textContent = totalTickers;
+    document.getElementById('priceCount').textContent = pricesFound + '/' + totalTickers;
+
+    // ---- Holdings table ----
+    var tbody = document.getElementById('holdingsBody');
+    tbody.innerHTML = '';
+    brokerNames.forEach(function(broker) {
+        var holdings = data.brokers[broker].holdings;
+        holdings.forEach(function(h, i) {
+            var pct = grandTotal > 0 ? (h.value / grandTotal * 100) : 0;
+            var tr = document.createElement('tr');
+            var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>' : '';
+            var priceStr = h.price > 0
+                ? '<span class="value-up">' + formatCurrency(h.price, h.currency) + '</span>'
+                : '<span class="value-neutral">—</span>';
+            tr.innerHTML =
+                '<td>' + h.ticker + cedi + '</td>' +
+                '<td>' + h.company + '</td>' +
+                '<td>' + (i === 0 ? '<span class="badge badge-broker">' + broker + '</span>' : '') + '</td>' +
+                '<td class="text-end">' + h.shares + '</td>' +
+                '<td class="text-end">' + priceStr + '</td>' +
+                '<td class="text-end fw-semibold">' + formatCurrency(h.value, h.currency) + '</td>' +
+                '<td class="text-end">' + pct.toFixed(1) + '%</td>';
+            tbody.appendChild(tr);
+        });
+    });
+
+    // ---- Pie chart ----
+    var pieData = data.pie || [];
+    if (pieChart) pieChart.destroy();
+
+    var ctx = document.getElementById('pieChart').getContext('2d');
+    pieChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: pieData.map(function(p) { return p.label; }),
+            datasets: [{
+                data: pieData.map(function(p) { return p.value; }),
+                backgroundColor: pieData.map(function(_, i) { return COLORS[i % COLORS.length]; }),
+                borderWidth: 1,
+                borderColor: '#0f1923',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { color: '#d0dae6', font: { size: 11 }, boxWidth: 12, padding: 8 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            var val = ctx.parsed || 0;
+                            var total = ctx.dataset.data.reduce(function(a, b) { return a + b; }, 0);
+                            var pct = total > 0 ? (val / total * 100).toFixed(1) : 0;
+                            return formatCurrency(val, 'USD') + ' (' + pct + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // ---- Broker cards ----
+    var container = document.getElementById('brokerCards');
+    container.innerHTML = '';
+    brokerNames.forEach(function(broker) {
+        var bd = data.brokers[broker];
+        var rows = '';
+        bd.holdings.forEach(function(h) {
+            var pct = grandTotal > 0 ? (h.value / grandTotal * 100) : 0;
+            var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
+            rows += '<tr>' +
+                '<td>' + h.ticker + '</td>' +
+                '<td class="text-end">' + h.shares + '</td>' +
+                '<td class="text-end">' + priceStr + '</td>' +
+                '<td class="text-end fw-semibold">' + formatCurrency(h.value, h.currency) + '</td>' +
+                '<td class="text-end">' + pct.toFixed(1) + '%</td>' +
+                '</tr>';
+        });
+        var card = document.createElement('div');
+        card.className = 'col-md-6';
+        card.innerHTML =
+            '<div class="card">' +
+            '<div class="card-header d-flex justify-content-between">' +
+            '<span>' + broker + '</span>' +
+            '<span class="text-info">' + formatCurrency(bd.total_value, 'USD') + '</span>' +
+            '</div>' +
+            '<div class="card-body p-0">' +
+            '<div class="table-responsive" style="max-height: 300px; overflow-y: auto;">' +
+            '<table class="table table-sm mb-0">' +
+            '<thead class="sticky-top" style="background: #1a2c3d;"><tr>' +
+            '<th>Ticker</th><th class="text-end">Shares</th><th class="text-end">Precio</th>' +
+            '<th class="text-end">Valor</th><th class="text-end">%</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
+        container.appendChild(card);
+    });
+
+    document.getElementById('updateTime').textContent =
+        'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
+}
+
+window.addEventListener('DOMContentLoaded', function() {
+    loadData();
+});
+</script>
+</body>
+</html>

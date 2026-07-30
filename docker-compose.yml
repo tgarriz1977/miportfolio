@@ -1,0 +1,13 @@
+services:
+  portfolio:
+    build: .
+    container_name: portfolio-dashboard
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    environment:
+      - PORTFOLIO_DB=/data/portfolio.db
+      - HOST=0.0.0.0
+      - PORT=5050
