@@ -5,6 +5,7 @@ Reads from portfolio.db, fetches live prices via yfinance,
 and serves a Bootstrap + Chart.js dashboard.
 """
 
+import json
 import os
 import sqlite3
 import logging
@@ -14,6 +15,9 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 from flask import Flask, jsonify, request, send_file
+
+import llm
+import sources
 
 # ── Config ────────────────────────────────────────────────────────────
 DB_PATH = Path(os.environ.get("PORTFOLIO_DB", "/data/portfolio.db"))
@@ -69,6 +73,17 @@ def ensure_schema():
     if "is_cedear" not in cols:
         conn.execute("ALTER TABLE prices ADD COLUMN is_cedear INTEGER DEFAULT 0")
         conn.commit()
+
+    # Cache for /api/insight, keyed by the resolved company symbol so a
+    # CEDEAR and its direct holding share one entry.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS insights (
+            symbol TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
     conn.close()
 
 
@@ -114,6 +129,33 @@ def save_price(ticker, is_cedear, price, currency="USD"):
     conn.execute(
         "INSERT INTO prices (ticker, is_cedear, price, currency) VALUES (?, ?, ?, ?)",
         (ticker, int(is_cedear), price, currency),
+    )
+    conn.commit()
+    conn.close()
+
+
+def read_insight_cache(symbol):
+    """Cached insight payload for a symbol, or None when absent or stale."""
+    ttl_hours = float(os.environ.get("INSIGHT_TTL_HOURS", 6))
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        "SELECT payload FROM insights WHERE symbol = ? "
+        "AND created_at > datetime('now', ?)",
+        (symbol, f"-{ttl_hours} hours"),
+    ).fetchone()
+    conn.close()
+    return json.loads(row[0]) if row else None
+
+
+def write_insight_cache(symbol, payload):
+    """Store an insight payload, replacing any previous one for the symbol."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute(
+        "INSERT INTO insights (symbol, payload, created_at) "
+        "VALUES (?, ?, datetime('now')) "
+        "ON CONFLICT(symbol) DO UPDATE SET "
+        "payload = excluded.payload, created_at = excluded.created_at",
+        (symbol, json.dumps(payload)),
     )
     conn.commit()
     conn.close()
@@ -273,6 +315,50 @@ def api_refresh():
         "failed": errors,
         "count": len(results),
     })
+
+
+@app.route("/api/insight/<ticker>")
+def api_insight(ticker):
+    """News and earnings for one holding, summarized by the configured model.
+
+    The flags come from the caller because the frontend already knows them;
+    they decide which company the ticker refers to (see
+    sources.resolve_insight_symbol).
+    """
+    is_cedear = request.args.get("is_cedear", "").lower() in ("1", "true")
+    is_crypto = request.args.get("is_crypto", "").lower() in ("1", "true")
+    currency = request.args.get("currency") or "USD"
+    symbol = sources.resolve_insight_symbol(ticker, is_cedear, is_crypto, currency)
+
+    cached = read_insight_cache(symbol)
+    if cached is not None:
+        cached["cached"] = True
+        return jsonify(cached)
+
+    data = sources.gather(symbol)
+
+    # The gathered data is returned even on failure so the panel can still
+    # show news and earnings dates without a working model.
+    try:
+        provider = llm.get_provider()
+    except llm.ProviderNotConfigured as exc:
+        return jsonify({"error": str(exc), "symbol": symbol, **data}), 503
+
+    system, user = llm.build_insight_prompt(symbol, data)
+    try:
+        summary = provider.summarize(system, user)
+    except llm.ProviderError as exc:
+        return jsonify({"error": str(exc), "symbol": symbol, **data}), 502
+
+    payload = {
+        "symbol": symbol,
+        "summary": summary,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **data,
+    }
+    write_insight_cache(symbol, payload)
+    payload["cached"] = False
+    return jsonify(payload)
 
 
 # ── Entry point ──────────────────────────────────────────────────────

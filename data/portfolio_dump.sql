@@ -139,3 +139,9 @@ INSERT INTO prices (id,ticker,price,currency,recorded_at) VALUES (80,'YPFD',8040
 INSERT INTO prices (id,ticker,price,currency,recorded_at) VALUES (81,'MU',857.5869750976562,'USD','2026-07-30 14:42:43');
 
 COMMIT;
+
+CREATE TABLE insights (
+    symbol TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
