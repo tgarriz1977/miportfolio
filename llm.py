@@ -107,7 +107,10 @@ class OpenAICompatProvider:
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:300]
+            # Generous limit: providers put the actionable part late in the
+            # body (a retired-model notice can arrive under a 429 whose first
+            # line only says "quota exceeded").
+            detail = exc.read().decode("utf-8", "replace")[:2000]
             raise ProviderError(f"{exc.code} {exc.reason}: {detail}") from exc
         except Exception as exc:
             raise ProviderError(str(exc)) from exc

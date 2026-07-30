@@ -201,16 +201,20 @@ Los tests marcados `network` consultan Yahoo Finance de verdad — verifican que
 
 ## Próximos pasos
 
-### Verificación pendiente
+### Nombres de modelo que se retiran
 
-**Falta ejecutar una llamada autenticada real.** El módulo se desarrolló sin credencial disponible. Lo que sí está verificado contra Gemini con una key inválida: el adaptador arma bien la URL, manda el request en el formato correcto y Gemini responde `"Please pass a valid API key"` — es decir, todo el camino funciona salvo la credencial.
+Google retira modelos sin previo aviso y el nombre viejo deja de funcionar. Ya pasó con `gemini-2.0-flash` y `gemini-2.5-flash`. Por eso `.env.example` usa **`gemini-flash-latest`**, un alias que sigue al modelo vigente.
 
-Lo que queda por confirmar al configurar una key de verdad:
+Dos cosas que confunden al diagnosticar esto:
 
-1. Que el resumen aparezca en el panel.
-2. Que respete las reglas del prompt — sobre todo que **no recomiende comprar ni vender**, que es la regla que más importa y la que un modelo puede desobedecer.
+- El error llega como **HTTP 429 "quota exceeded"**, y recién más adelante en el cuerpo dice que el modelo fue retirado. Si ves un 429 con una key nueva, leé el mensaje completo antes de asumir que es un problema de cuota.
+- El endpoint de listado **sigue devolviendo modelos retirados**. Si uno falla, probalo con un request real antes de descartar el resto de la configuración.
 
-Si el resumen sale con recomendaciones, el arreglo va en `SYSTEM_PROMPT` (`llm.py`), no en la UI.
+### Revisar en la primera consulta
+
+El modelo puede desobedecer el prompt. Vale la pena leer los primeros resúmenes y confirmar que **no recomiende comprar ni vender**. Si aparece una recomendación, el arreglo va en `SYSTEM_PROMPT` (`llm.py`), no en la UI.
+
+Caso de borde observado: el modelo reporta correctamente noticias del tipo "tal banco subió su precio objetivo", citando la fuente. Eso es resumir una noticia, no emitir un precio objetivo propio — dentro de lo permitido. Si igual preferís que ni las mencione, hay que endurecer el prompt.
 
 ### Fuentes de datos pendientes
 

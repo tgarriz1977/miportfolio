@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code
-COPY app.py index.html ./
+# App code. Every module app.py imports has to be listed here — a missing
+# one only fails at container start, not at build time.
+COPY app.py sources.py llm.py index.html ./
 RUN mkdir -p /data
 
 EXPOSE 5050
