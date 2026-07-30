@@ -197,3 +197,34 @@ pytest -m "not network"     # sin salir a internet
 ```
 
 Los tests marcados `network` consultan Yahoo Finance de verdad — verifican que las fuentes degraden bien cuando un símbolo no tiene cobertura y que el payload sea serializable a JSON (pandas emite `NaN`, que rompe `jsonify`). Los de la ruta usan un proveedor falso, así que no necesitan credenciales.
+
+## Próximos pasos
+
+### Verificación pendiente
+
+**La llamada real al modelo nunca se ejecutó de punta a punta.** El módulo de análisis se desarrolló sin credencial ni modelo local disponible, así que `AnthropicProvider.summarize()` y `OpenAICompatProvider.summarize()` están cubiertos por tests unitarios de configuración, pero nunca hablaron con un proveedor real. Lo primero al configurar uno es abrir el panel de cualquier ticker y confirmar que el resumen aparece y respeta las reglas del prompt (que no recomiende comprar ni vender).
+
+Es lo más probable que falle y lo más rápido de verificar.
+
+### Fuentes de datos pendientes
+
+La capa de `sources.py` está preparada para recibirlas: cada una entra como una función nueva con la misma forma de retorno, sin tocar `llm.py` ni la ruta.
+
+| Fuente | Qué hace falta | Costo |
+|--------|----------------|-------|
+| Reddit | Registrar una app OAuth (el JSON público devuelve 403) | Gratis |
+| YouTube | Key de Google Cloud, Data API v3 | Gratis, con cupo diario |
+| X | Plan pago de su API (devuelve 401 sin credencial) | ~US$100/mes |
+
+### Mejoras conocidas
+
+- **Streaming de la respuesta.** Hoy el panel espera la respuesta completa con un "Consultando…". Con un modelo local lento eso puede ser medio minuto de spinner. Si terminás usando Ollama en CPU, conviene.
+- **Cobertura de acciones argentinas.** Yahoo no tiene noticias ni fecha de balance para `ALUA.BA` (sí fundamentales). Para esas posiciones haría falta otra fuente si el análisis les importa.
+- **Costo por consulta.** Con Anthropic ronda los US$0,10–0,15 por ticker. La caché de 6 horas amortigua, pero si consultás mucho conviene medir antes de subir el TTL o cambiar de modelo.
+
+### Decisiones abiertas
+
+Dos cosas sobre los datos que quedaron sin resolver y afectan los números que muestra el panel:
+
+- **PAM, VIST e YPF en Vestiva** figuran como mercado BA en el último export, pero hoy se cotizan en dólares tomando el precio del ADR en NYSE. Si en realidad se tienen en BYMA, hay que pasarlos a pesos — y ahí PAM sería el mismo instrumento que el PAMP de TM Inversiones, e YPF el mismo que YPFD.
+- **Belo (BTC y ETH)** no aparece en el último export de tenencias. Se dejaron cargados asumiendo que el export cubre solo acciones y CEDEARs, no crypto.
