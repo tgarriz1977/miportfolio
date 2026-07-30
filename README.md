@@ -153,12 +153,21 @@ docker compose up -d
 | Proveedor | `LLM_PROVIDER` | `LLM_BASE_URL` | Dónde sacar la key |
 |-----------|----------------|----------------|--------------------|
 | Gemini | `openai_compat` | `https://generativelanguage.googleapis.com/v1beta/openai` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| DeepSeek | `openai_compat` | `https://api.deepseek.com/v1` | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
 | Anthropic | `anthropic` | — | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | Local (Ollama, LM Studio, vLLM) | `openai_compat` | `http://host.docker.internal:11434/v1` | no lleva |
+
+Cualquier servicio que hable el protocolo de OpenAI entra por `openai_compat` sin tocar código — solo cambian `LLM_BASE_URL` y `LLM_MODEL`.
 
 Desde el contenedor, un modelo local en tu máquina se alcanza por `host.docker.internal`, **no** por `localhost` — `localhost` dentro del contenedor es el contenedor mismo.
 
 Sin `LLM_PROVIDER` definido, `/api/insight` responde HTTP 503 con un mensaje explicando qué falta, y el panel igual muestra las noticias y los balances. El resto del dashboard no se ve afectado.
+
+### Qué datos salen hacia el proveedor
+
+El prompt se arma exclusivamente con lo que devuelve `sources.gather()`: el símbolo, noticias públicas, fechas y resultados de balances, e ingresos por período. **Tu tenencia no se envía** — ni la cantidad de acciones, ni el broker, ni el valor de la posición, ni los totales de la cartera. Nada de eso se consulta al construir el prompt.
+
+Lo único que revela la consulta es **qué ticker estás mirando**. Si eso importa en tu caso, un modelo local no manda nada afuera.
 
 ### Resolución de símbolo — se invierte respecto de los precios
 
