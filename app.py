@@ -79,7 +79,7 @@ def get_holdings():
     cur = conn.cursor()
     cur.execute("""
         SELECT h.ticker, h.company, h.shares, h.sector, h.broker,
-               h.is_cedear, h.cedear_ratio,
+               h.is_cedear, h.is_crypto, h.cedear_ratio,
                p.price, p.currency, p.recorded_at
         FROM holdings h
         LEFT JOIN (
@@ -224,6 +224,7 @@ def api_portfolio():
             "currency": currency,
             "value": round(value, 2),
             "is_cedear": bool(h["is_cedear"]),
+            "is_crypto": bool(h["is_crypto"]),
             "updated_at": h["recorded_at"] or "—",
         })
         brokers[broker]["totals"][currency] = brokers[broker]["totals"].get(currency, 0) + value

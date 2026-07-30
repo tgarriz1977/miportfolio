@@ -22,6 +22,11 @@
         .pie-container { max-height: 420px; }
         .value-up { color: #4ade80; }
         .value-neutral { color: #d0dae6; }
+        .nav-tabs { border-bottom-color: #1e2d3d; }
+        .nav-tabs .nav-link { color: #6c8aa0; border: none; border-bottom: 2px solid transparent; cursor: pointer; }
+        .nav-tabs .nav-link.active { color: #6ea8fe; background: transparent; border-bottom-color: #6ea8fe; }
+        th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+        th.sortable:hover { color: #9dc4fb; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -82,22 +87,33 @@
         </div>
     </div>
 
-    <!-- Main content: pie chart + holdings table -->
+    <!-- Main content: category pie chart + detail panel -->
     <div class="row g-3">
         <div class="col-lg-5">
             <div class="card h-100">
-                <div class="card-header">Distribucion por ticker</div>
-                <div class="card-body pie-container d-flex align-items-center justify-content-center">
-                    <canvas id="pieChart"></canvas>
+                <div class="card-header" id="pieTitle">Distribución</div>
+                <div class="card-body">
+                    <ul class="nav nav-tabs mb-3" id="categoryTabs">
+                        <li class="nav-item"><a class="nav-link active" href="#" data-cat="cedear" onclick="return selectCategory(event, 'cedear')">CEDEARs</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#" data-cat="usa" onclick="return selectCategory(event, 'usa')">Acciones USA</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#" data-cat="ba" onclick="return selectCategory(event, 'ba')">Acciones BA</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#" data-cat="crypto" onclick="return selectCategory(event, 'crypto')">Crypto</a></li>
+                    </ul>
+                    <div class="pie-container d-flex align-items-center justify-content-center">
+                        <canvas id="pieChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
         <div class="col-lg-7">
             <div class="card h-100">
-                <div class="card-header">Tenencias</div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span id="detailTitle">CEDEARs</span>
+                    <button class="btn btn-outline-secondary btn-sm" id="detailBackBtn" style="display:none" onclick="clearDetailFilter()">Ver todo</button>
+                </div>
                 <div class="card-body p-0">
                     <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                        <table class="table table-sm table-hover mb-0" id="holdingsTable">
+                        <table class="table table-sm table-hover mb-0">
                             <thead class="sticky-top" style="background: #15202b;">
                                 <tr>
                                     <th>Ticker</th>
@@ -105,8 +121,36 @@
                                     <th>Broker</th>
                                     <th class="text-end">Shares</th>
                                     <th class="text-end">Precio</th>
-                                    <th class="text-end">Valor</th>
+                                    <th class="text-end">Valor ARS</th>
+                                    <th class="text-end">Valor USD</th>
                                     <th class="text-end">%</th>
+                                </tr>
+                            </thead>
+                            <tbody id="detailBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full holdings table (sortable) -->
+    <div class="row g-3 mt-2">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">Tenencias</div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-sm table-hover mb-0" id="holdingsTable">
+                            <thead class="sticky-top" style="background: #15202b;">
+                                <tr>
+                                    <th class="sortable" data-key="ticker">Ticker</th>
+                                    <th class="sortable" data-key="company">Empresa</th>
+                                    <th class="sortable" data-key="broker">Broker</th>
+                                    <th class="text-end sortable" data-key="shares">Shares</th>
+                                    <th class="text-end sortable" data-key="price">Precio</th>
+                                    <th class="text-end sortable" data-key="value">Valor</th>
+                                    <th class="text-end sortable" data-key="pct">%</th>
                                 </tr>
                             </thead>
                             <tbody id="holdingsBody"></tbody>
@@ -131,11 +175,57 @@ const COLORS = [
     '#fca5a5', '#d8b4fe', '#67e8f9', '#fdba74', '#c4b5fd',
 ];
 
+// Every holding falls into exactly one category — mono-currency, so a
+// category's pie slices are always comparable to each other (no ARS/USD
+// mixed on the same nominal scale, unlike the old single combined pie).
+const CATEGORIES = [
+    { key: 'cedear', label: 'CEDEARs', currency: 'ARS',
+      match: function(h) { return h.is_cedear; } },
+    { key: 'usa', label: 'Acciones USA', currency: 'USD',
+      match: function(h) { return !h.is_cedear && !h.is_crypto && h.currency === 'USD'; } },
+    { key: 'ba', label: 'Acciones BA', currency: 'ARS',
+      match: function(h) { return !h.is_cedear && !h.is_crypto && h.currency === 'ARS'; } },
+    { key: 'crypto', label: 'Crypto', currency: 'USD',
+      match: function(h) { return h.is_crypto; } },
+];
+
+let lastData = null;
+let activeCategory = 'cedear';
+let selectedTicker = null;
+let categoryPieTickers = [];
+let sortState = { key: null, dir: 1 };
+
 function formatCurrency(val, cur) {
     if (cur === 'ARS') {
         return '$' + val.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     }
     return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+function getAllHoldings() {
+    if (!lastData) return [];
+    var flat = [];
+    Object.keys(lastData.brokers).forEach(function(broker) {
+        lastData.brokers[broker].holdings.forEach(function(h) {
+            var copy = Object.assign({}, h);
+            copy.broker = broker;
+            flat.push(copy);
+        });
+    });
+    return flat;
+}
+
+function getTotals() {
+    return (lastData && lastData.totals) || {};
+}
+
+function categoryHoldings(catKey) {
+    var cat = CATEGORIES.find(function(c) { return c.key === catKey; });
+    return getAllHoldings().filter(cat.match);
+}
+
+function categoryTotal(holdings) {
+    return holdings.reduce(function(sum, h) { return sum + h.value; }, 0);
 }
 
 function refreshPrices() {
@@ -166,7 +256,175 @@ function loadData() {
         .catch(function(e) { console.error('Error loading portfolio:', e); });
 }
 
+function selectCategory(evt, key) {
+    evt.preventDefault();
+    activeCategory = key;
+    selectedTicker = null;
+    document.querySelectorAll('#categoryTabs .nav-link').forEach(function(el) {
+        el.classList.toggle('active', el.getAttribute('data-cat') === key);
+    });
+    renderCategoryPie();
+    renderDetailPanel();
+    return false;
+}
+
+function clearDetailFilter() {
+    selectedTicker = null;
+    renderDetailPanel();
+}
+
+function renderCategoryPie() {
+    var cat = CATEGORIES.find(function(c) { return c.key === activeCategory; });
+    var holdings = categoryHoldings(activeCategory);
+
+    // Aggregate by ticker across brokers within this category only — safe
+    // because a category is a single instrument type in a single currency,
+    // unlike the old cross-category aggregation.
+    var agg = {};
+    holdings.forEach(function(h) {
+        if (!agg[h.ticker]) agg[h.ticker] = { label: h.company || h.ticker, value: 0 };
+        agg[h.ticker].value += h.value;
+    });
+    var pieItems = Object.keys(agg)
+        .map(function(t) { return { ticker: t, label: agg[t].label, value: agg[t].value }; })
+        .sort(function(a, b) { return b.value - a.value; });
+
+    categoryPieTickers = pieItems.map(function(p) { return p.ticker; });
+    document.getElementById('pieTitle').textContent = 'Distribución — ' + cat.label;
+
+    if (pieChart) pieChart.destroy();
+    var ctx = document.getElementById('pieChart').getContext('2d');
+    pieChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: pieItems.map(function(p) { return p.ticker + ' (' + p.label + ')'; }),
+            datasets: [{
+                data: pieItems.map(function(p) { return p.value; }),
+                backgroundColor: pieItems.map(function(_, i) { return COLORS[i % COLORS.length]; }),
+                borderWidth: 1,
+                borderColor: '#0f1923',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            onClick: function(evt, elements) {
+                if (!elements.length) return;
+                selectedTicker = categoryPieTickers[elements[0].index];
+                renderDetailPanel();
+            },
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { color: '#d0dae6', font: { size: 11 }, boxWidth: 12, padding: 8 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            var val = ctx.parsed || 0;
+                            var total = ctx.dataset.data.reduce(function(a, b) { return a + b; }, 0);
+                            var pct = total > 0 ? (val / total * 100).toFixed(1) : 0;
+                            return formatCurrency(val, cat.currency) + ' (' + pct + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderDetailPanel() {
+    var cat = CATEGORIES.find(function(c) { return c.key === activeCategory; });
+    var holdings = categoryHoldings(activeCategory);
+    var total = categoryTotal(holdings);
+    var rows = (selectedTicker ? holdings.filter(function(h) { return h.ticker === selectedTicker; }) : holdings)
+        .slice()
+        .sort(function(a, b) { return b.value - a.value; });
+
+    document.getElementById('detailTitle').textContent = cat.label + (selectedTicker ? ' — ' + selectedTicker : '');
+    document.getElementById('detailBackBtn').style.display = selectedTicker ? '' : 'none';
+
+    var tbody = document.getElementById('detailBody');
+    tbody.innerHTML = '';
+    rows.forEach(function(h) {
+        var pct = total > 0 ? (h.value / total * 100) : 0;
+        var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
+        var arsVal = h.currency === 'ARS' ? formatCurrency(h.value, 'ARS') : '—';
+        var usdVal = h.currency === 'USD' ? formatCurrency(h.value, 'USD') : '—';
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td>' + h.ticker + '</td>' +
+            '<td>' + h.company + '</td>' +
+            '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
+            '<td class="text-end">' + h.shares + '</td>' +
+            '<td class="text-end">' + priceStr + '</td>' +
+            '<td class="text-end fw-semibold">' + arsVal + '</td>' +
+            '<td class="text-end fw-semibold">' + usdVal + '</td>' +
+            '<td class="text-end">' + pct.toFixed(1) + '%</td>';
+        tbody.appendChild(tr);
+    });
+}
+
+function updateSortHeaders() {
+    document.querySelectorAll('#holdingsTable thead th.sortable').forEach(function(th) {
+        var key = th.getAttribute('data-key');
+        var base = th.getAttribute('data-label');
+        if (base === null) {
+            base = th.textContent;
+            th.setAttribute('data-label', base);
+        }
+        th.textContent = base + (sortState.key === key ? (sortState.dir === 1 ? ' ▲' : ' ▼') : '');
+    });
+}
+
+function renderHoldingsTable() {
+    var totals = getTotals();
+    var rows = getAllHoldings().map(function(h) {
+        var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
+        var row = Object.assign({}, h);
+        row.pct = pct;
+        return row;
+    });
+
+    if (sortState.key) {
+        rows.sort(function(a, b) {
+            var av = a[sortState.key];
+            var bv = b[sortState.key];
+            if (typeof av === 'string') {
+                av = av.toLowerCase();
+                bv = (bv || '').toLowerCase();
+            }
+            if (av < bv) return -1 * sortState.dir;
+            if (av > bv) return 1 * sortState.dir;
+            return 0;
+        });
+    }
+
+    var tbody = document.getElementById('holdingsBody');
+    tbody.innerHTML = '';
+    rows.forEach(function(h) {
+        var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>' : '';
+        var priceStr = h.price > 0
+            ? '<span class="value-up">' + formatCurrency(h.price, h.currency) + '</span>'
+            : '<span class="value-neutral">—</span>';
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td>' + h.ticker + cedi + '</td>' +
+            '<td>' + h.company + '</td>' +
+            '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
+            '<td class="text-end">' + h.shares + '</td>' +
+            '<td class="text-end">' + priceStr + '</td>' +
+            '<td class="text-end fw-semibold">' + formatCurrency(h.value, h.currency) + '</td>' +
+            '<td class="text-end">' + h.pct.toFixed(1) + '%</td>';
+        tbody.appendChild(tr);
+    });
+
+    updateSortHeaders();
+}
+
 function render(data) {
+    lastData = data;
+
     // Totals are kept per currency (never summed together — a USD balance
     // and an ARS balance aren't the same unit).
     var totals = data.totals || {};
@@ -196,67 +454,9 @@ function render(data) {
     document.getElementById('tickerCount').textContent = totalTickers;
     document.getElementById('priceCount').textContent = pricesFound + '/' + totalTickers;
 
-    // ---- Holdings table ----
-    var tbody = document.getElementById('holdingsBody');
-    tbody.innerHTML = '';
-    brokerNames.forEach(function(broker) {
-        var holdings = data.brokers[broker].holdings;
-        holdings.forEach(function(h, i) {
-            var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
-            var tr = document.createElement('tr');
-            var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>' : '';
-            var priceStr = h.price > 0
-                ? '<span class="value-up">' + formatCurrency(h.price, h.currency) + '</span>'
-                : '<span class="value-neutral">—</span>';
-            tr.innerHTML =
-                '<td>' + h.ticker + cedi + '</td>' +
-                '<td>' + h.company + '</td>' +
-                '<td>' + (i === 0 ? '<span class="badge badge-broker">' + broker + '</span>' : '') + '</td>' +
-                '<td class="text-end">' + h.shares + '</td>' +
-                '<td class="text-end">' + priceStr + '</td>' +
-                '<td class="text-end fw-semibold">' + formatCurrency(h.value, h.currency) + '</td>' +
-                '<td class="text-end">' + pct.toFixed(1) + '%</td>';
-            tbody.appendChild(tr);
-        });
-    });
-
-    // ---- Pie chart ----
-    var pieData = data.pie || [];
-    if (pieChart) pieChart.destroy();
-
-    var ctx = document.getElementById('pieChart').getContext('2d');
-    pieChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: pieData.map(function(p) { return p.label; }),
-            datasets: [{
-                data: pieData.map(function(p) { return p.value; }),
-                backgroundColor: pieData.map(function(_, i) { return COLORS[i % COLORS.length]; }),
-                borderWidth: 1,
-                borderColor: '#0f1923',
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: { color: '#d0dae6', font: { size: 11 }, boxWidth: 12, padding: 8 }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(ctx) {
-                            var val = ctx.parsed || 0;
-                            var total = ctx.dataset.data.reduce(function(a, b) { return a + b; }, 0);
-                            var pct = total > 0 ? (val / total * 100).toFixed(1) : 0;
-                            return formatCurrency(val, 'USD') + ' (' + pct + '%)';
-                        }
-                    }
-                }
-            }
-        }
-    });
+    renderCategoryPie();
+    renderDetailPanel();
+    renderHoldingsTable();
 
     // ---- Broker cards ----
     var container = document.getElementById('brokerCards');
@@ -301,6 +501,18 @@ function render(data) {
 }
 
 window.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('#holdingsTable thead th.sortable').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var key = th.getAttribute('data-key');
+            if (sortState.key === key) {
+                sortState.dir *= -1;
+            } else {
+                sortState.key = key;
+                sortState.dir = 1;
+            }
+            renderHoldingsTable();
+        });
+    });
     loadData();
 });
 </script>
