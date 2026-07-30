@@ -29,6 +29,12 @@
         th.sortable:hover { color: #9dc4fb; }
         .ticker-link { color: #6ea8fe; text-decoration: none; }
         .ticker-link:hover { color: #9dc4fb; text-decoration: underline; }
+        .insight-btn { background: none; border: none; color: #6c8aa0; cursor: pointer; padding: 0 .25rem; font-size: .8rem; }
+        .insight-btn:hover { color: #6ea8fe; }
+        .insight-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1050; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+        .insight-panel { background: #15202b; border: 1px solid #1e2d3d; border-radius: .75rem; max-width: 760px; width: 100%; max-height: 85vh; overflow-y: auto; }
+        .insight-body { white-space: pre-wrap; line-height: 1.55; }
+        .insight-disclaimer { background: #2d2410; border: 1px solid #5c4813; color: #f5d78e; border-radius: .5rem; padding: .5rem .75rem; font-size: .85rem; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -166,6 +172,17 @@
     <!-- Broker breakdown cards -->
     <div class="row g-3 mt-2" id="brokerCards"></div>
 
+    <!-- Insight panel -->
+    <div id="insightOverlay" class="insight-overlay" style="display:none" onclick="closeInsight(event)">
+        <div class="insight-panel" onclick="event.stopPropagation()">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span id="insightTitle">Análisis</span>
+                <button class="btn btn-outline-secondary btn-sm" onclick="closeInsight()">Cerrar</button>
+            </div>
+            <div class="card-body" id="insightContent"></div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -204,6 +221,90 @@ function tradingViewSymbol(h) {
 function tickerLink(h) {
     return '<a class="ticker-link" target="_blank" rel="noopener noreferrer" href="' +
         'https://www.tradingview.com/symbols/' + tradingViewSymbol(h) + '/">' + h.ticker + '</a>';
+}
+
+function insightButton(h) {
+    var args = [h.ticker, !!h.is_cedear, !!h.is_crypto, h.currency]
+        .map(function(v) { return JSON.stringify(v); }).join(',');
+    return ' <button class="insight-btn" title="Ver noticias y balances" ' +
+        'onclick=\'openInsight(' + args + ')\'>&#9432;</button>';
+}
+
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+}
+
+function closeInsight(evt) {
+    if (evt && evt.target !== document.getElementById('insightOverlay')) return;
+    document.getElementById('insightOverlay').style.display = 'none';
+}
+
+function renderInsight(data, errorMessage) {
+    var parts = ['<div class="insight-disclaimer mb-3">Resumen informativo generado por un modelo de lenguaje. ' +
+        'No es asesoramiento financiero ni una recomendación de compra o venta.</div>'];
+
+    if (errorMessage) {
+        parts.push('<div class="alert alert-warning py-2">' + escapeHtml(errorMessage) + '</div>');
+    }
+    if (data.summary) {
+        parts.push('<div class="insight-body mb-3">' + escapeHtml(data.summary) + '</div>');
+    }
+
+    var cal = data.earnings_calendar;
+    parts.push('<h6 class="text-info">Próximo balance</h6><p>' +
+        (cal ? escapeHtml(cal.date) + (cal.eps_estimate != null ? ' — EPS estimado ' + cal.eps_estimate : '')
+             : 'Sin datos disponibles.') + '</p>');
+
+    var hist = data.earnings_history || [];
+    if (hist.length) {
+        var rows = hist.map(function(r) {
+            return '<tr><td>' + escapeHtml(r.date) + '</td><td class="text-end">' + (r.eps_estimate != null ? r.eps_estimate : '—') +
+                '</td><td class="text-end">' + (r.eps_reported != null ? r.eps_reported : '—') +
+                '</td><td class="text-end">' + (r.surprise_pct != null ? r.surprise_pct.toFixed(1) + '%' : '—') + '</td></tr>';
+        }).join('');
+        parts.push('<h6 class="text-info">Balances anteriores</h6>' +
+            '<table class="table table-sm"><thead><tr><th>Fecha</th><th class="text-end">EPS est.</th>' +
+            '<th class="text-end">EPS real</th><th class="text-end">Sorpresa</th></tr></thead><tbody>' +
+            rows + '</tbody></table>');
+    } else {
+        parts.push('<h6 class="text-info">Balances anteriores</h6><p>Sin datos disponibles.</p>');
+    }
+
+    var news = data.news || [];
+    if (news.length) {
+        parts.push('<h6 class="text-info">Noticias</h6><ul>' + news.map(function(n) {
+            var title = escapeHtml(n.title);
+            var link = n.url ? '<a class="ticker-link" target="_blank" rel="noopener noreferrer" href="' +
+                escapeHtml(n.url) + '">' + title + '</a>' : title;
+            return '<li>' + link + ' <span class="text-secondary">(' +
+                escapeHtml(n.publisher || 'fuente desconocida') + ')</span></li>';
+        }).join('') + '</ul>');
+    } else {
+        parts.push('<h6 class="text-info">Noticias</h6><p>Sin noticias disponibles para este símbolo.</p>');
+    }
+
+    document.getElementById('insightContent').innerHTML = parts.join('');
+}
+
+function openInsight(ticker, isCedear, isCrypto, currency) {
+    var overlay = document.getElementById('insightOverlay');
+    document.getElementById('insightTitle').textContent = 'Análisis — ' + ticker;
+    document.getElementById('insightContent').innerHTML =
+        '<p class="text-secondary">Consultando noticias y balances…</p>';
+    overlay.style.display = 'flex';
+
+    var qs = 'is_cedear=' + (isCedear ? 1 : 0) + '&is_crypto=' + (isCrypto ? 1 : 0) +
+        '&currency=' + encodeURIComponent(currency || 'USD');
+
+    fetch('/api/insight/' + encodeURIComponent(ticker) + '?' + qs)
+        .then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
+        .then(function(res) { renderInsight(res.body, res.ok ? null : res.body.error); })
+        .catch(function(e) {
+            document.getElementById('insightContent').innerHTML =
+                '<div class="alert alert-danger py-2">No se pudo consultar: ' + escapeHtml(e.message) + '</div>';
+        });
 }
 
 let lastData = null;
@@ -370,7 +471,7 @@ function renderDetailPanel() {
         var usdVal = h.currency === 'USD' ? formatCurrency(h.value, 'USD') : '—';
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + tickerLink(h) + '</td>' +
+            '<td>' + tickerLink(h) + insightButton(h) + '</td>' +
             '<td>' + h.company + '</td>' +
             '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
             '<td class="text-end">' + h.shares + '</td>' +
@@ -426,7 +527,7 @@ function renderHoldingsTable() {
             : '<span class="value-neutral">—</span>';
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + tickerLink(h) + cedi + '</td>' +
+            '<td>' + tickerLink(h) + cedi + insightButton(h) + '</td>' +
             '<td>' + h.company + '</td>' +
             '<td><span class="badge badge-broker">' + h.broker + '</span></td>' +
             '<td class="text-end">' + h.shares + '</td>' +
