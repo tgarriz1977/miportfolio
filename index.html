@@ -36,9 +36,30 @@
         .insight-btn { background: none; border: none; color: #6c8aa0; cursor: pointer; padding: 0 .25rem; font-size: .8rem; }
         .insight-btn:hover { color: #6ea8fe; }
         .insight-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1050; display: flex; align-items: center; justify-content: center; padding: 1rem; }
-        .insight-panel { background: #15202b; border: 1px solid #1e2d3d; border-radius: .75rem; max-width: 760px; width: 100%; max-height: 85vh; overflow-y: auto; }
+        .insight-panel { background: #15202b; border: 1px solid #1e2d3d; border-radius: .75rem; max-width: 760px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 1.5rem 3rem rgba(0,0,0,.45); }
+        /* Bootstrap sizes .card-header and .card-body from custom properties
+           it declares on .card. This panel is not a .card and has none as an
+           ancestor, so those vars never resolve, the padding declarations are
+           invalid at computed-value time, and the content sits flush against
+           the border. The panel has to set its own spacing. */
+        .insight-panel > .card-header { padding: .75rem 1.25rem; position: sticky; top: 0; z-index: 1; }
+        .insight-panel > .card-body { padding: 1.25rem; }
+        /* The body is a stack of separate sections — summary, next balance,
+           history, news. The rule is what stops them reading as one block. */
+        .insight-panel .card-body > h6 { margin: 1.75rem 0 .75rem; padding-top: 1.25rem; border-top: 1px solid #1e2d3d; color: #6ea8fe; }
+        .insight-panel .card-body > p, .insight-panel .card-body > ul { margin-bottom: 0; }
+        .insight-panel .card-body > ul { padding-left: 1.1rem; }
+        .insight-panel .card-body > ul li + li { margin-top: .4rem; }
+        /* .table is globally margin-bottom:0; the earnings window puts a
+           caption right under one and needs the gap back. */
+        .insight-panel .card-body > .table { margin-bottom: .75rem; }
+        /* Seven columns don't fit the 760px reading width the summary panel
+           is sized for, and dates broke across two lines. */
+        .insight-panel-wide { max-width: 920px; }
+        .earnings-table { white-space: nowrap; }
+        .earnings-table td.company { white-space: normal; }
         .insight-body { white-space: pre-wrap; line-height: 1.55; }
-        .insight-disclaimer { background: #2d2410; border: 1px solid #5c4813; color: #f5d78e; border-radius: .5rem; padding: .5rem .75rem; font-size: .85rem; }
+        .insight-disclaimer { background: #2d2410; border: 1px solid #5c4813; color: #f5d78e; border-radius: .5rem; padding: .625rem .875rem; font-size: .85rem; line-height: 1.45; }
         .total-card { cursor: pointer; user-select: none; }
         .total-card:hover { border-color: #2d4a6e; }
         .total-hidden { letter-spacing: .15em; color: #6c8aa0; }
@@ -207,7 +228,7 @@
 
     <!-- Earnings window -->
     <div id="earningsOverlay" class="insight-overlay" style="display:none" onclick="closeEarnings(event)">
-        <div class="insight-panel" onclick="event.stopPropagation()">
+        <div class="insight-panel insight-panel-wide" onclick="event.stopPropagation()">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Próximos balances</span>
                 <div>
@@ -272,6 +293,12 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Yahoo hands back EPS at full float precision (4.68025); two decimals is
+// how the figure is quoted everywhere else.
+function formatEps(value) {
+    return value != null ? value.toFixed(2) : '—';
+}
+
 function closeInsight(evt) {
     if (evt && evt.target !== document.getElementById('insightOverlay')) return;
     document.getElementById('insightOverlay').style.display = 'none';
@@ -289,28 +316,28 @@ function renderInsight(data, errorMessage) {
     }
 
     var cal = data.earnings_calendar;
-    parts.push('<h6 class="text-info">Próximo balance</h6><p>' +
-        (cal ? escapeHtml(cal.date) + (cal.eps_estimate != null ? ' — EPS estimado ' + cal.eps_estimate : '')
+    parts.push('<h6>Próximo balance</h6><p>' +
+        (cal ? escapeHtml(cal.date) + (cal.eps_estimate != null ? ' — EPS estimado ' + formatEps(cal.eps_estimate) : '')
              : 'Sin datos disponibles.') + '</p>');
 
     var hist = data.earnings_history || [];
     if (hist.length) {
         var rows = hist.map(function(r) {
-            return '<tr><td>' + escapeHtml(r.date) + '</td><td class="text-end">' + (r.eps_estimate != null ? r.eps_estimate : '—') +
-                '</td><td class="text-end">' + (r.eps_reported != null ? r.eps_reported : '—') +
+            return '<tr><td>' + escapeHtml(r.date) + '</td><td class="text-end">' + formatEps(r.eps_estimate) +
+                '</td><td class="text-end">' + formatEps(r.eps_reported) +
                 '</td><td class="text-end">' + (r.surprise_pct != null ? r.surprise_pct.toFixed(1) + '%' : '—') + '</td></tr>';
         }).join('');
-        parts.push('<h6 class="text-info">Balances anteriores</h6>' +
+        parts.push('<h6>Balances anteriores</h6>' +
             '<table class="table table-sm"><thead><tr><th>Fecha</th><th class="text-end">EPS est.</th>' +
             '<th class="text-end">EPS real</th><th class="text-end">Sorpresa</th></tr></thead><tbody>' +
             rows + '</tbody></table>');
     } else {
-        parts.push('<h6 class="text-info">Balances anteriores</h6><p>Sin datos disponibles.</p>');
+        parts.push('<h6>Balances anteriores</h6><p>Sin datos disponibles.</p>');
     }
 
     var news = data.news || [];
     if (news.length) {
-        parts.push('<h6 class="text-info">Noticias</h6><ul>' + news.map(function(n) {
+        parts.push('<h6>Noticias</h6><ul>' + news.map(function(n) {
             var title = escapeHtml(n.title);
             var link = n.url ? '<a class="ticker-link" target="_blank" rel="noopener noreferrer" href="' +
                 escapeHtml(n.url) + '">' + title + '</a>' : title;
@@ -318,7 +345,7 @@ function renderInsight(data, errorMessage) {
                 escapeHtml(n.publisher || 'fuente desconocida') + ')</span></li>';
         }).join('') + '</ul>');
     } else {
-        parts.push('<h6 class="text-info">Noticias</h6><p>Sin noticias disponibles para este símbolo.</p>');
+        parts.push('<h6>Noticias</h6><p>Sin noticias disponibles para este símbolo.</p>');
     }
 
     document.getElementById('insightContent').innerHTML = parts.join('');
@@ -364,10 +391,18 @@ function loadEarnings(force) {
         });
 }
 
+// Bare count, for the table cell that already sits under a "Faltan" header.
 function daysLabel(days) {
     if (days == null) return '—';
     if (days === 0) return 'hoy';
-    return days === 1 ? 'mañana' : 'en ' + days + ' días';
+    return days === 1 ? 'mañana' : days + ' días';
+}
+
+// Same value phrased to read inline on the dashboard card, where there is
+// no header to supply the "how long until" part.
+function daysPhrase(days) {
+    if (days == null || days <= 1) return daysLabel(days);
+    return 'en ' + days + ' días';
 }
 
 // Reporting within the week is the thing worth noticing at a glance.
@@ -392,7 +427,7 @@ function renderEarningsCard() {
     el.innerHTML = '<div class="d-flex flex-wrap gap-4">' + earningsData.rows.map(function(r) {
         return '<div><span class="fw-semibold">' + escapeHtml(r.ticker) + '</span> ' +
             '<span class="text-secondary">' + escapeHtml(r.next_date) + '</span> ' +
-            '<span class="' + soonClass(r.days_until) + '">(' + daysLabel(r.days_until) + ')</span></div>';
+            '<span class="' + soonClass(r.days_until) + '">(' + daysPhrase(r.days_until) + ')</span></div>';
     }).join('') + '</div>';
 }
 
@@ -415,15 +450,15 @@ function renderEarningsWindow() {
     var rows = earningsData.rows.map(function(r) {
         var surprise = r.last_surprise_pct != null ? r.last_surprise_pct.toFixed(1) + '%' : '—';
         return '<tr><td class="fw-semibold">' + escapeHtml(r.ticker) + '</td>' +
-            '<td>' + escapeHtml(r.company) + '</td>' +
+            '<td class="company">' + escapeHtml(r.company) + '</td>' +
             '<td>' + escapeHtml(r.next_date) + '</td>' +
             '<td class="' + soonClass(r.days_until) + '">' + daysLabel(r.days_until) + '</td>' +
-            '<td class="text-end">' + (r.eps_estimate != null ? r.eps_estimate.toFixed(2) : '—') + '</td>' +
+            '<td class="text-end">' + formatEps(r.eps_estimate) + '</td>' +
             '<td>' + escapeHtml(r.last_date || '—') + '</td>' +
             '<td class="text-end">' + surprise + '</td></tr>';
     }).join('');
 
-    el.innerHTML = '<table class="table table-sm"><thead><tr>' +
+    el.innerHTML = '<table class="table table-sm earnings-table"><thead><tr>' +
         '<th>Ticker</th><th>Empresa</th><th>Fecha</th><th>Faltan</th>' +
         '<th class="text-end">EPS est.</th><th>Último</th><th class="text-end">Sorpresa</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>' +
