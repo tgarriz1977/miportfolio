@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request, send_file
 
 import llm
 import sources
+import youtube
 
 # ── Config ────────────────────────────────────────────────────────────
 DB_PATH = Path(os.environ.get("PORTFOLIO_DB", "/data/portfolio.db"))
@@ -107,6 +108,16 @@ def ensure_schema():
     # out, so it isn't re-fetched on every page load.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS earnings (
+            symbol TEXT PRIMARY KEY,
+            payload TEXT,
+            fetched_on TEXT NOT NULL
+        )
+    """)
+    # YouTube results, same shape and same per-day rule. Empty results are
+    # stored too: a symbol with no whitelisted coverage would otherwise spend
+    # 100 quota units every time the panel opens.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS videos (
             symbol TEXT PRIMARY KEY,
             payload TEXT,
             fetched_on TEXT NOT NULL
@@ -258,6 +269,65 @@ def earnings_symbols():
                 "company": holding["company"] or holding["ticker"],
             }
     return entries
+
+
+def read_videos_cache(symbol):
+    """(hit, videos) for today's entry — same rule as read_earnings_cache."""
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        "SELECT payload FROM videos WHERE symbol = ? "
+        "AND fetched_on = date('now', 'localtime')",
+        (symbol,),
+    ).fetchone()
+    conn.close()
+    return (True, json.loads(row[0])) if row else (False, None)
+
+
+def write_videos_cache(symbol, videos):
+    """Store a video list against today, replacing any earlier entry."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute(
+        "INSERT INTO videos (symbol, payload, fetched_on) "
+        "VALUES (?, ?, date('now', 'localtime')) "
+        "ON CONFLICT(symbol) DO UPDATE SET "
+        "payload = excluded.payload, fetched_on = excluded.fetched_on",
+        (symbol, json.dumps(videos)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def company_for_symbol(symbol):
+    """Display name for a resolved symbol, or None when it isn't held.
+
+    Reuses earnings_symbols() so the symbol-to-company rule — including the
+    CEDEAR and ADR collapsing — lives in exactly one place.
+    """
+    return (earnings_symbols().get(symbol) or {}).get("company")
+
+
+def gather_videos(symbol):
+    """(videos, error) for one symbol, cached for the local day.
+
+    Returns an error string rather than raising: YouTube is a secondary
+    source, and the panel must keep showing earnings and news whether or not
+    it is configured or reachable.
+    """
+    hit, cached = read_videos_cache(symbol)
+    if hit:
+        return cached, None
+
+    try:
+        videos = youtube.fetch_videos(symbol, company_for_symbol(symbol))
+    except youtube.NotConfigured as exc:
+        # Not cached: the next request should pick up a key added meanwhile.
+        return [], str(exc)
+    except youtube.YouTubeError as exc:
+        log.warning("YouTube failed for %s: %s", symbol, exc)
+        return [], str(exc)
+
+    write_videos_cache(symbol, videos)
+    return videos, None
 
 
 def days_until(date_text, today):
@@ -447,24 +517,33 @@ def api_insight(ticker):
 
     data = sources.gather(symbol)
 
+    # Videos are deliberately kept out of `data`: `data` is what goes to the
+    # model, and a model cannot watch a video. It would receive only titles
+    # and end up asserting things about content nobody saw.
+    videos, videos_error = gather_videos(symbol)
+    extra = {"videos": videos}
+    if videos_error:
+        extra["videos_error"] = videos_error
+
     # The gathered data is returned even on failure so the panel can still
     # show news and earnings dates without a working model.
     try:
         provider = llm.get_provider()
     except llm.ProviderNotConfigured as exc:
-        return jsonify({"error": str(exc), "symbol": symbol, **data}), 503
+        return jsonify({"error": str(exc), "symbol": symbol, **data, **extra}), 503
 
     system, user = llm.build_insight_prompt(symbol, data)
     try:
         summary = provider.summarize(system, user)
     except llm.ProviderError as exc:
-        return jsonify({"error": str(exc), "symbol": symbol, **data}), 502
+        return jsonify({"error": str(exc), "symbol": symbol, **data, **extra}), 502
 
     payload = {
         "symbol": symbol,
         "summary": summary,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         **data,
+        **extra,
     }
     write_insight_cache(symbol, payload)
     payload["cached"] = False
