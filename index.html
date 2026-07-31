@@ -35,6 +35,9 @@
         .insight-panel { background: #15202b; border: 1px solid #1e2d3d; border-radius: .75rem; max-width: 760px; width: 100%; max-height: 85vh; overflow-y: auto; }
         .insight-body { white-space: pre-wrap; line-height: 1.55; }
         .insight-disclaimer { background: #2d2410; border: 1px solid #5c4813; color: #f5d78e; border-radius: .5rem; padding: .5rem .75rem; font-size: .85rem; }
+        .total-card { cursor: pointer; user-select: none; }
+        .total-card:hover { border-color: #2d4a6e; }
+        .total-hidden { letter-spacing: .15em; color: #6c8aa0; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -62,7 +65,7 @@
     <!-- Summary cards -->
     <div class="row g-3 mb-3" id="summaryCards">
         <div class="col-md-6 col-lg-3">
-            <div class="card">
+            <div class="card total-card" onclick="toggleTotals()" title="Click para ocultar o mostrar el total">
                 <div class="card-body">
                     <div class="text-secondary small">Total cartera</div>
                     <div id="grandTotal"><span class="fs-3 fw-bold">—</span></div>
@@ -312,12 +315,17 @@ let activeCategory = 'cedear';
 let selectedTicker = null;
 let categoryPieTickers = [];
 let sortState = { key: null, dir: 1 };
+let totalsHidden = (function() {
+    try { return localStorage.getItem('totalsHidden') === '1'; } catch (e) { return false; }
+})();
 
+// En Argentina "$" a secas significa pesos; los dólares se escriben "US$".
+// Sin esa distinción, $7.161.000,00 y $11.649,36 se leen como la misma moneda.
 function formatCurrency(val, cur) {
     if (cur === 'ARS') {
         return '$' + val.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     }
-    return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2 });
+    return 'US$' + val.toLocaleString('en-US', { minimumFractionDigits: 2 });
 }
 
 function getAllHoldings() {
@@ -540,24 +548,44 @@ function renderHoldingsTable() {
     updateSortHeaders();
 }
 
-function render(data) {
-    lastData = data;
+function toggleTotals() {
+    totalsHidden = !totalsHidden;
+    // Persisted so it survives a reload — a total that reappears on every
+    // refresh isn't much of a privacy toggle.
+    try { localStorage.setItem('totalsHidden', totalsHidden ? '1' : '0'); } catch (e) {}
+    renderGrandTotal();
+}
 
+function renderGrandTotal() {
     // Totals are kept per currency (never summed together — a USD balance
     // and an ARS balance aren't the same unit).
-    var totals = data.totals || {};
+    var totals = getTotals();
     var currencies = Object.keys(totals).sort(function(a, b) {
         if (a === 'USD') return -1;
         if (b === 'USD') return 1;
         return a.localeCompare(b);
     });
-    document.getElementById('grandTotal').innerHTML = currencies.length
-        ? currencies.map(function(c) {
-              return '<div class="fs-4 fw-bold">' + formatCurrency(totals[c], c) +
-                  ' <span class="text-secondary fs-6">' + c + '</span></div>';
-          }).join('')
-        : '<span class="fs-3 fw-bold">—</span>';
 
+    var el = document.getElementById('grandTotal');
+    if (!currencies.length) {
+        el.innerHTML = '<span class="fs-3 fw-bold">—</span>';
+        return;
+    }
+    el.innerHTML = currencies.map(function(c) {
+        var shown = totalsHidden
+            ? '<span class="total-hidden">••••••</span>'
+            : formatCurrency(totals[c], c);
+        return '<div class="fs-4 fw-bold">' + shown +
+            ' <span class="text-secondary fs-6">' + c + '</span></div>';
+    }).join('');
+}
+
+function render(data) {
+    lastData = data;
+
+    renderGrandTotal();
+
+    var totals = data.totals || {};
     var brokerNames = Object.keys(data.brokers);
     document.getElementById('brokerCount').textContent = brokerNames.length;
 
