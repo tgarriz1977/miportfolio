@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code. Every module app.py imports has to be listed here — a missing
 # one only fails at container start, not at build time.
-COPY app.py sources.py llm.py index.html ./
+COPY app.py sources.py llm.py youtube.py index.html ./
 RUN mkdir -p /data
 
 EXPOSE 5050

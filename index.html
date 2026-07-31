@@ -304,6 +304,26 @@ function closeInsight(evt) {
     document.getElementById('insightOverlay').style.display = 'none';
 }
 
+// Three distinct states, and the panel has to tell them apart: not set up,
+// set up but nothing matched the channel allowlist, and results.
+function renderVideos(data) {
+    if (data.videos_error) {
+        return '<p class="text-secondary">' + escapeHtml(data.videos_error) + '</p>';
+    }
+    var videos = data.videos || [];
+    if (!videos.length) {
+        return '<p class="text-secondary">Sin videos recientes de los canales configurados.</p>';
+    }
+    return '<ul>' + videos.map(function(v) {
+        var title = escapeHtml(v.title);
+        var link = v.url ? '<a class="ticker-link" target="_blank" rel="noopener noreferrer" href="' +
+            escapeHtml(v.url) + '">' + title + '</a>' : title;
+        return '<li>' + link + ' <span class="text-secondary">(' +
+            escapeHtml(v.channel || 'canal desconocido') +
+            (v.published ? ' — ' + escapeHtml(v.published) : '') + ')</span></li>';
+    }).join('') + '</ul>';
+}
+
 function renderInsight(data, errorMessage) {
     var parts = ['<div class="insight-disclaimer mb-3">Resumen informativo generado por un modelo de lenguaje. ' +
         'No es asesoramiento financiero ni una recomendación de compra o venta.</div>'];
@@ -347,6 +367,8 @@ function renderInsight(data, errorMessage) {
     } else {
         parts.push('<h6>Noticias</h6><p>Sin noticias disponibles para este símbolo.</p>');
     }
+
+    parts.push('<h6>Videos</h6>' + renderVideos(data));
 
     document.getElementById('insightContent').innerHTML = parts.join('');
 }

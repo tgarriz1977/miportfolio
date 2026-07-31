@@ -20,3 +20,9 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - INSIGHT_TTL_HOURS=${INSIGHT_TTL_HOURS:-6}
+      # Videos del panel de análisis. Sin YOUTUBE_API_KEY la sección avisa
+      # que falta configurarla y el resto del panel no cambia.
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - YOUTUBE_CHANNELS=${YOUTUBE_CHANNELS:-}
+      - YOUTUBE_MAX_RESULTS=${YOUTUBE_MAX_RESULTS:-5}
+      - YOUTUBE_DAYS=${YOUTUBE_DAYS:-30}

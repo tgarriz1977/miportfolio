@@ -127,6 +127,18 @@ Caché del calendario de balances. Igual que `insights`, la clave es el símbolo
 
 Una entrada vale mientras `fetched_on` sea la fecha local de hoy. Los símbolos sin fecha se guardan como `null` en vez de omitirse: si no, los que Yahoo no cubre se volverían a consultar en cada carga de la página, que es justo el costo que el caché evita.
 
+### videos
+
+Caché de la búsqueda de YouTube. Misma forma y misma regla por día que `earnings`.
+
+| Columna     | Tipo     | Descripción                     |
+|------------|----------|---------------------------------|
+| symbol     | TEXT PK  | Símbolo resuelto de la empresa  |
+| payload    | TEXT     | Lista de videos en JSON, `[]` si la búsqueda no dio resultados |
+| fetched_on | TEXT     | Fecha local `YYYY-MM-DD` de la consulta |
+
+Los resultados vacíos se cachean igual que los llenos: un símbolo sin cobertura gastaría 100 unidades de cuota cada vez que abrís el panel.
+
 ### Restaurar desde dump
 
 ```bash
@@ -235,6 +247,18 @@ Para **precios**, un CEDEAR y su acción directa son instrumentos distintos. Par
 ### Cobertura despareja
 
 Yahoo no cubre todo por igual: `ALUA.BA` no tiene noticias ni fecha de balance (sí fundamentales), y las crypto tienen noticias pero no balances. Cada fuente se resuelve por separado y su ausencia se informa como "sin datos" — nunca aborta la consulta ni se inventa el faltante.
+
+### Videos de YouTube
+
+La sección "Videos" del panel lista la cobertura reciente en video de la empresa. Se configura en `.env` (ver `.env.example`); sin `YOUTUBE_API_KEY` el panel funciona igual y la sección avisa que falta la key.
+
+**La cuota define el diseño.** `search.list` cuesta 100 de las 10.000 unidades diarias del tier gratuito. Restringir la búsqueda por canal a través de la API obliga a una llamada por canal: con 8 canales serían 800 unidades por símbolo, o sea unas 12 consultas por día en total. Por eso se hace **una sola búsqueda por símbolo** y la lista blanca se aplica sobre los resultados, del lado de la aplicación. Con el caché por día y 22 tickers, el peor caso son 2.200 unidades.
+
+**Esperá ver la sección vacía seguido.** Que un canal de la lista blanca aparezca entre los primeros 50 resultados de una búsqueda general no está garantizado, y para tickers chicos (ALAB, ECOG, TGNO4) no va a haber nada. Es el intercambio: alta señal a cambio de cobertura. Si te falta cobertura, sumá canales a `YOUTUBE_CHANNELS`, o dejalo vacío para búsqueda abierta.
+
+`YOUTUBE_CHANNELS` acepta handles (`@Bloomberg`) además de IDs. Conviene el handle: es lo que ves en la URL del canal, mientras que un ID como `UCIALMKvObZNtJ6AmdCLP7Lg` mal copiado no da error — simplemente no matchea nunca y la lista blanca parece rota.
+
+**Los videos no se le pasan al modelo.** El modelo no puede ver un video: solo recibiría títulos y descripciones, y el prompt le pide resumir lo que se le entrega, así que terminaría afirmando cosas sobre contenido que nadie miró. Se listan como enlaces y el resumen sigue basándose en balances, fundamentales y noticias.
 
 ### Fuentes no incluidas
 

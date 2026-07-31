@@ -317,14 +317,17 @@ def gather_videos(symbol):
     if hit:
         return cached, None
 
+    # youtube.py reports what broke; the wording the panel shows is decided
+    # here, so the module is not in the business of writing UI copy.
     try:
         videos = youtube.fetch_videos(symbol, company_for_symbol(symbol))
-    except youtube.NotConfigured as exc:
-        # Not cached: the next request should pick up a key added meanwhile.
-        return [], str(exc)
+    except youtube.NotConfigured:
+        # Not cached: a key added later should take effect on the next
+        # request, not the next day.
+        return [], "Configurá YOUTUBE_API_KEY en .env para ver videos."
     except youtube.YouTubeError as exc:
         log.warning("YouTube failed for %s: %s", symbol, exc)
-        return [], str(exc)
+        return [], f"No se pudieron consultar los videos: {exc}"
 
     write_videos_cache(symbol, videos)
     return videos, None
