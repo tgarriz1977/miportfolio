@@ -9,7 +9,7 @@ import json
 import os
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +23,9 @@ import sources
 DB_PATH = Path(os.environ.get("PORTFOLIO_DB", "/data/portfolio.db"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 5050))
+
+# How many upcoming balances /api/earnings returns by default.
+DEFAULT_EARNINGS_LIMIT = 5
 
 # Map local tickers to Yahoo Finance symbols — only for non-CEDEAR holdings.
 # CEDEARs (is_cedear=1) are resolved dynamically to "<ticker>.BA" by
@@ -63,16 +66,32 @@ app = Flask(__name__)
 
 # ── DB helpers ────────────────────────────────────────────────────────
 def ensure_schema():
-    """Add the is_cedear column to prices if migrating from an older DB.
-
-    Needed to tell apart a ticker's direct holding (USD) from its CEDEAR
-    (ARS) — see resolve_yf_symbol(). Additive only, safe to run every startup.
-    """
+    """Bring an older DB up to date. Additive only, safe on every startup."""
     conn = sqlite3.connect(str(DB_PATH))
+    # Tells apart a ticker's direct holding (USD) from its CEDEAR (ARS) —
+    # see resolve_yf_symbol().
     cols = [row[1] for row in conn.execute("PRAGMA table_info(prices)").fetchall()]
     if "is_cedear" not in cols:
         conn.execute("ALTER TABLE prices ADD COLUMN is_cedear INTEGER DEFAULT 0")
         conn.commit()
+
+    holding_cols = [row[1] for row in conn.execute("PRAGMA table_info(holdings)").fetchall()]
+    if "is_adr" not in holding_cols:
+        conn.execute("ALTER TABLE holdings ADD COLUMN is_adr INTEGER DEFAULT 0")
+        conn.commit()
+
+    # Derived from sources.ADR_MAP on every startup rather than loaded by
+    # hand, so adding a mapping is the only edit needed to mark a new ADR.
+    # Clearing first is what makes dropping a mapping unmark it too.
+    adr_symbols = sorted(set(sources.ADR_MAP.values()))
+    conn.execute("UPDATE holdings SET is_adr = 0 WHERE is_adr = 1")
+    if adr_symbols:
+        conn.execute(
+            "UPDATE holdings SET is_adr = 1 WHERE is_cedear = 0 AND ticker IN "
+            f"({','.join('?' * len(adr_symbols))})",
+            adr_symbols,
+        )
+    conn.commit()
 
     # Cache for /api/insight, keyed by the resolved company symbol so a
     # CEDEAR and its direct holding share one entry.
@@ -81,6 +100,16 @@ def ensure_schema():
             symbol TEXT PRIMARY KEY,
             payload TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    # Cache for /api/earnings, one row per company symbol per local day. A
+    # symbol with nothing scheduled is stored as JSON null rather than left
+    # out, so it isn't re-fetched on every page load.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS earnings (
+            symbol TEXT PRIMARY KEY,
+            payload TEXT,
+            fetched_on TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -94,7 +123,7 @@ def get_holdings():
     cur = conn.cursor()
     cur.execute("""
         SELECT h.ticker, h.company, h.shares, h.sector, h.broker,
-               h.is_cedear, h.is_crypto, h.cedear_ratio,
+               h.is_cedear, h.is_crypto, h.is_adr, h.cedear_ratio,
                p.price, p.currency, p.recorded_at
         FROM holdings h
         LEFT JOIN (
@@ -159,6 +188,84 @@ def write_insight_cache(symbol, payload):
     )
     conn.commit()
     conn.close()
+
+
+def read_earnings_cache(symbol):
+    """(hit, summary) for today's entry, if there is one.
+
+    The hit flag is separate from the value because a cached None — a symbol
+    with nothing scheduled — is an answer, not a miss.
+    """
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        "SELECT payload FROM earnings WHERE symbol = ? "
+        "AND fetched_on = date('now', 'localtime')",
+        (symbol,),
+    ).fetchone()
+    conn.close()
+    return (True, json.loads(row[0])) if row else (False, None)
+
+
+def write_earnings_cache(symbol, summary):
+    """Store a summary against today, replacing any earlier entry."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute(
+        "INSERT INTO earnings (symbol, payload, fetched_on) "
+        "VALUES (?, ?, date('now', 'localtime')) "
+        "ON CONFLICT(symbol) DO UPDATE SET "
+        "payload = excluded.payload, fetched_on = excluded.fetched_on",
+        (symbol, json.dumps(summary)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def holding_currency(holding):
+    """ARS or USD for a holding, without needing a price row to exist.
+
+    Currency normally comes from the latest price, but a holding added
+    before its first refresh has none — and defaulting to USD there would
+    turn ALUA into a US stock, so fall back to what the ticker maps to.
+    """
+    if holding["currency"]:
+        return holding["currency"]
+    symbol = resolve_yf_symbol(holding["ticker"], bool(holding["is_cedear"]))
+    return "ARS" if symbol and symbol.endswith(".BA") else "USD"
+
+
+def earnings_symbols():
+    """Company symbol → the ticker and name to display for it.
+
+    Crypto is skipped outright; it has no balance sheet. Holdings that
+    resolve to the same symbol collapse into one entry — a CEDEAR with its
+    direct holding, an ADR with its local BYMA share — preferring the
+    holding whose ticker *is* the symbol, so PAM/PAMP displays as "PAM".
+    """
+    entries = {}
+    for holding in get_holdings():
+        if holding["is_crypto"]:
+            continue
+        symbol = sources.resolve_insight_symbol(
+            holding["ticker"],
+            bool(holding["is_cedear"]),
+            False,
+            holding_currency(holding),
+        )
+        chosen = entries.get(symbol)
+        if chosen is None or (chosen["ticker"] != symbol and holding["ticker"] == symbol):
+            entries[symbol] = {
+                "ticker": holding["ticker"],
+                "company": holding["company"] or holding["ticker"],
+            }
+    return entries
+
+
+def days_until(date_text, today):
+    """Whole days from today to an ISO date, or None when unparseable."""
+    try:
+        return (date.fromisoformat(str(date_text)[:10]) - today).days
+    except (TypeError, ValueError):
+        return None
 
 
 # ── Price update ──────────────────────────────────────────────────────
@@ -267,6 +374,7 @@ def api_portfolio():
             "value": round(value, 2),
             "is_cedear": bool(h["is_cedear"]),
             "is_crypto": bool(h["is_crypto"]),
+            "is_adr": bool(h["is_adr"]),
             "updated_at": h["recorded_at"] or "—",
         })
         brokers[broker]["totals"][currency] = brokers[broker]["totals"].get(currency, 0) + value
@@ -286,6 +394,8 @@ def api_portfolio():
             pie_labels[key] = h.get("company") or h["ticker"]
             if h.get("is_cedear"):
                 pie_labels[key] += " (CEDEAR)"
+            elif h.get("is_adr"):
+                pie_labels[key] += " (ADR)"
 
     return jsonify({
         "brokers": {
@@ -359,6 +469,48 @@ def api_insight(ticker):
     write_insight_cache(symbol, payload)
     payload["cached"] = False
     return jsonify(payload)
+
+
+@app.route("/api/earnings")
+def api_earnings():
+    """Upcoming earnings dates across the portfolio, nearest first.
+
+    Every symbol has to be asked before the nearest ones are known, so the
+    whole portfolio is fetched and cached for the day; `limit` only trims
+    what comes back, it saves no requests.
+    """
+    refresh = request.args.get("refresh", "false").lower() == "true"
+    try:
+        limit = int(request.args.get("limit", DEFAULT_EARNINGS_LIMIT))
+    except ValueError:
+        limit = DEFAULT_EARNINGS_LIMIT
+
+    today = date.today()
+    rows = []
+    all_cached = True
+
+    for symbol, meta in earnings_symbols().items():
+        hit, summary = (False, None) if refresh else read_earnings_cache(symbol)
+        if not hit:
+            all_cached = False
+            summary = sources.fetch_earnings_summary(symbol)
+            write_earnings_cache(symbol, summary)
+        if not summary:
+            continue
+
+        remaining = days_until(summary["next_date"], today)
+        # Yahoo sometimes serves a date it has not rolled forward yet; a
+        # balance already reported is not an upcoming one.
+        if remaining is not None and remaining < 0:
+            continue
+        rows.append({"symbol": symbol, "days_until": remaining, **meta, **summary})
+
+    rows.sort(key=lambda row: row["next_date"])
+    return jsonify({
+        "rows": rows[:limit] if limit > 0 else rows,
+        "fetched_on": today.isoformat(),
+        "cached": all_cached,
+    })
 
 
 # ── Entry point ──────────────────────────────────────────────────────
