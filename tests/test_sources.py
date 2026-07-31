@@ -31,6 +31,23 @@ def test_cedear_and_direct_share_one_symbol():
            sources.resolve_insight_symbol("AMD", False, False, "USD")
 
 
+def test_local_share_resolves_to_the_adr():
+    assert sources.resolve_insight_symbol("PAMP", False, False, "ARS") == "PAM"
+    assert sources.resolve_insight_symbol("YPFD", False, False, "ARS") == "YPF"
+
+
+def test_adr_and_local_share_resolve_to_one_symbol():
+    # Yahoo answers for both listings with the same date, so without this
+    # they would show up as two rows for one balance.
+    assert sources.resolve_insight_symbol("PAMP", False, False, "ARS") == \
+           sources.resolve_insight_symbol("PAM", False, False, "USD")
+
+
+def test_byma_stock_without_an_adr_keeps_the_ba_suffix():
+    # Regression: the ADR map must not swallow ordinary BYMA tickers.
+    assert sources.resolve_insight_symbol("ALUA", False, False, "ARS") == "ALUA.BA"
+
+
 # ---- Fetchers (network) ----
 
 @pytest.mark.network
@@ -59,6 +76,22 @@ def test_earnings_history_excludes_unreported_quarters():
     rows = sources.fetch_earnings_history("AMD")
     assert rows
     assert all(r["eps_reported"] is not None for r in rows)
+
+
+@pytest.mark.network
+def test_earnings_summary_has_the_window_columns():
+    summary = sources.fetch_earnings_summary("AMD")
+    assert set(summary) == {
+        "next_date", "eps_estimate",
+        "last_date", "last_eps_reported", "last_surprise_pct",
+    }
+    assert summary["next_date"]
+
+
+@pytest.mark.network
+def test_earnings_summary_is_none_without_an_upcoming_date():
+    # ALUA.BA has old history but nothing scheduled — the window excludes it.
+    assert sources.fetch_earnings_summary("ALUA.BA") is None
 
 
 @pytest.mark.network

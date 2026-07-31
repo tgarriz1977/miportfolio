@@ -17,7 +17,7 @@
 - Migrations in `ensure_schema()` are additive and idempotent — safe on every startup.
 - ARS and USD amounts are never summed. Existing rule, unchanged by this work.
 - Tests that reach Yahoo Finance carry `@pytest.mark.network`.
-- Run tests with `python3 -m pytest`; the environment with `yfinance` installed is the running container (`docker exec portfolio-dashboard`).
+- Run tests from a local venv: `python3 -m venv venv && ./venv/bin/pip install -r requirements.txt -r requirements-dev.txt`, then `./venv/bin/python3 -m pytest`. The container is not usable for this — it bakes the code in with no source mount and has no pytest.
 
 ---
 

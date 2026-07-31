@@ -18,6 +18,16 @@ import yfinance as yf
 log = logging.getLogger(__name__)
 
 
+# Local BYMA ticker -> US ADR symbol. An ADR and its local share are one
+# company filing one balance, but Yahoo answers for both listings with the
+# same date and the EPS in each listing's currency (PAM 2.52 USD against
+# PAMP.BA 145.62 ARS), so without this map one balance reads as two.
+ADR_MAP = {
+    "PAMP": "PAM",
+    "YPFD": "YPF",
+}
+
+
 def resolve_insight_symbol(ticker, is_cedear, is_crypto, currency):
     """Return the Yahoo Finance symbol for the underlying *company*.
 
@@ -25,11 +35,15 @@ def resolve_insight_symbol(ticker, is_cedear, is_crypto, currency):
     CEDEAR and its direct US holding are different instruments in different
     currencies, but for news and earnings they are the same company — so a
     CEDEAR resolves to the bare US ticker rather than "<ticker>.BA".
+    ADR_MAP extends the same idea to Argentine companies listed in both
+    places under different tickers.
     """
     if is_crypto:
         return f"{ticker}-USD"
     if is_cedear:
         return ticker
+    if ticker in ADR_MAP:
+        return ADR_MAP[ticker]
     if currency == "ARS":
         return f"{ticker}.BA"
     return ticker
@@ -128,6 +142,27 @@ def fetch_earnings_history(symbol, limit=8):
         if len(rows) >= limit:
             break
     return rows
+
+
+def fetch_earnings_summary(symbol):
+    """Next earnings date plus the last reported quarter, or None.
+
+    None means nothing is scheduled — the single place where the calendar
+    window's rule for dropping a symbol is decided.
+    """
+    calendar = fetch_earnings_calendar(symbol)
+    if not calendar:
+        return None
+
+    history = fetch_earnings_history(symbol, limit=1)
+    last = history[0] if history else None
+    return {
+        "next_date": calendar["date"],
+        "eps_estimate": calendar["eps_estimate"],
+        "last_date": last["date"] if last else None,
+        "last_eps_reported": last["eps_reported"] if last else None,
+        "last_surprise_pct": last["surprise_pct"] if last else None,
+    }
 
 
 def fetch_fundamentals(symbol, limit=4):
