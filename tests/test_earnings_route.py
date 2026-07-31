@@ -105,6 +105,27 @@ def test_adr_and_local_share_make_one_row_shown_as_the_adr(app_module, client, a
     assert rows[0]["symbol"] == "PAM"
 
 
+def test_share_classes_make_one_row(app_module, client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.sources, "fetch_earnings_summary",
+        lambda symbol: {"next_date": "2099-10-28", "eps_estimate": 2.31,
+                        "last_date": "2026-07-29", "last_eps_reported": 2.5,
+                        "last_surprise_pct": 8.2} if symbol == "GOOG" else None,
+    )
+    insert_holding(app_module.DB_PATH, "GOOG", "BECA Vestiva", company="Alphabet")
+    insert_holding(app_module.DB_PATH, "GOOGL", "TM Inversiones", is_cedear=1,
+                   company="Alphabet Inc")
+    rows = client.get("/api/earnings").get_json()["rows"]
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "GOOG"
+
+
+def test_share_class_holdings_are_not_marked_as_adrs(app_module, client):
+    insert_holding(app_module.DB_PATH, "GOOG", "BECA Vestiva")
+    app_module.ensure_schema()
+    assert app_module.get_holdings()[0]["is_adr"] == 0
+
+
 def test_a_holding_with_no_price_row_still_resolves_to_byma(app_module, client, asked):
     # Currency comes from the latest price, which may not exist yet; falling
     # back to USD would turn ALUA into a US stock and ask Yahoo for "ALUA".

@@ -18,14 +18,25 @@ import yfinance as yf
 log = logging.getLogger(__name__)
 
 
-# Local BYMA ticker -> US ADR symbol. An ADR and its local share are one
-# company filing one balance, but Yahoo answers for both listings with the
-# same date and the EPS in each listing's currency (PAM 2.52 USD against
-# PAMP.BA 145.62 ARS), so without this map one balance reads as two.
+# An Argentine company's local BYMA ticker -> its US ADR. Kept separate from
+# the other alias kind because it is also what marks holdings.is_adr, and an
+# ADR is a specific thing: a US listing of a foreign company.
 ADR_MAP = {
     "PAMP": "PAM",
     "YPFD": "YPF",
 }
+
+# Secondary share class -> the class Yahoo files the company's results under.
+# Alphabet's GOOGL and GOOG differ only in voting rights.
+SHARE_CLASS_MAP = {
+    "GOOGL": "GOOG",
+}
+
+# Both kinds of alias mean the same thing here: two listings, one company,
+# one balance. Yahoo answers for each listing separately with the same date —
+# PAM and PAMP.BA both report 2026-08-04, quoting EPS in USD and ARS — so
+# without collapsing them a single balance reads as two rows.
+COMPANY_ALIASES = {**ADR_MAP, **SHARE_CLASS_MAP}
 
 
 def resolve_insight_symbol(ticker, is_cedear, is_crypto, currency):
@@ -35,15 +46,17 @@ def resolve_insight_symbol(ticker, is_cedear, is_crypto, currency):
     CEDEAR and its direct US holding are different instruments in different
     currencies, but for news and earnings they are the same company — so a
     CEDEAR resolves to the bare US ticker rather than "<ticker>.BA".
-    ADR_MAP extends the same idea to Argentine companies listed in both
-    places under different tickers.
+
+    COMPANY_ALIASES is checked before the CEDEAR branch, not after: a CEDEAR
+    would otherwise short-circuit to its bare ticker and never collapse (the
+    GOOGL CEDEAR has to reach GOOG).
     """
     if is_crypto:
         return f"{ticker}-USD"
+    if ticker in COMPANY_ALIASES:
+        return COMPANY_ALIASES[ticker]
     if is_cedear:
         return ticker
-    if ticker in ADR_MAP:
-        return ADR_MAP[ticker]
     if currency == "ARS":
         return f"{ticker}.BA"
     return ticker

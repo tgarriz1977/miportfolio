@@ -44,8 +44,31 @@ def test_adr_and_local_share_resolve_to_one_symbol():
 
 
 def test_byma_stock_without_an_adr_keeps_the_ba_suffix():
-    # Regression: the ADR map must not swallow ordinary BYMA tickers.
+    # Regression: the alias map must not swallow ordinary BYMA tickers.
     assert sources.resolve_insight_symbol("ALUA", False, False, "ARS") == "ALUA.BA"
+
+
+def test_share_classes_resolve_to_one_symbol():
+    # GOOGL and GOOG are one company filing one balance.
+    assert sources.resolve_insight_symbol("GOOGL", False, False, "USD") == "GOOG"
+    assert sources.resolve_insight_symbol("GOOG", False, False, "USD") == "GOOG"
+
+
+def test_an_aliased_cedear_still_reaches_its_company():
+    # The alias has to be checked before the CEDEAR branch: a CEDEAR
+    # otherwise short-circuits to its bare ticker and never collapses.
+    assert sources.resolve_insight_symbol("GOOGL", True, False, "ARS") == "GOOG"
+
+
+def test_a_cedear_outside_the_alias_map_is_unaffected():
+    assert sources.resolve_insight_symbol("MRVL", True, False, "ARS") == "MRVL"
+
+
+def test_share_class_aliases_are_not_adrs():
+    # is_adr is derived from ADR_MAP, so a share-class alias target must not
+    # leak into it — GOOG is not a US listing of a foreign company.
+    assert "GOOG" not in sources.ADR_MAP.values()
+    assert "GOOGL" in sources.COMPANY_ALIASES
 
 
 # ---- Fetchers (network) ----

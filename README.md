@@ -157,22 +157,30 @@ El frontend lo dispara al cargar la página, en paralelo con `/api/portfolio` y 
 
 Se excluyen la crypto (no tiene balances, ni se consulta) y los símbolos sin fecha publicada, como las acciones puramente de BYMA.
 
-### ADRs — una empresa, un balance
+### Una empresa, un balance
 
-Yahoo responde por las dos cotizaciones de una empresa argentina con la **misma fecha de balance**, con el EPS en la moneda de cada plaza:
+Yahoo responde por cada cotización por separado, con la **misma fecha de balance** y el EPS en la moneda de cada plaza:
 
 ```
 PAM      → 2026-08-04, EPS est. 2.52     (USD, NYSE)
 PAMP.BA  → 2026-08-04, EPS est. 145.62   (ARS, BYMA)
 ```
 
-Sin agrupar, un mismo balance aparecería dos veces. `ADR_MAP` en `sources.py` mapea el ticker local al del ADR:
+Sin agrupar, un mismo balance aparecería dos veces. Pasa por dos motivos distintos, y `sources.py` los mantiene separados porque solo el primero es un ADR:
 
 ```python
+# Ticker local en BYMA -> su ADR en EE.UU.
 ADR_MAP = {"PAMP": "PAM", "YPFD": "YPF"}
+
+# Clase de acción secundaria -> bajo cuál reporta la empresa.
+SHARE_CLASS_MAP = {"GOOGL": "GOOG"}
+
+COMPANY_ALIASES = {**ADR_MAP, **SHARE_CLASS_MAP}
 ```
 
-`resolve_insight_symbol()` lo consulta, así ambas tenencias resuelven al mismo símbolo y colapsan en una fila, mostrada con el ticker del ADR. **Agregar un ADR nuevo es una sola línea en ese mapa**: la columna `holdings.is_adr` se deriva de sus valores en cada arranque (`ensure_schema()`), y también se desmarca sola si se saca una entrada. No hay que tocar la base de datos a mano.
+`resolve_insight_symbol()` consulta `COMPANY_ALIASES` **antes** de la rama de CEDEAR: si no, un CEDEAR devolvería su ticker pelado y nunca colapsaría (el CEDEAR de GOOGL tiene que llegar a GOOG).
+
+**Agregar un alias nuevo es una línea**, en el mapa que corresponda. La columna `holdings.is_adr` se deriva de los valores de `ADR_MAP` en cada arranque (`ensure_schema()`) y se desmarca sola si se saca una entrada, así que no hay que tocar la base de datos a mano. Los alias de clase de acción quedan fuera de ese marcado a propósito: GOOG no es el ADR de nada.
 
 ## Módulo de análisis
 
