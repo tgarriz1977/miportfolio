@@ -19,6 +19,7 @@ Panel web auto-actualizable para visualizar tenencias de acciones agrupadas por 
 -   **Tabla de tenencias ordenable** — Ticker, empresa, broker, shares, precio, valor y porcentaje, con ordenamiento por cualquier columna.
 -   **Links a TradingView** — Cada ticker abre el gráfico del instrumento correcto: un CEDEAR abre su gráfico en pesos de BYMA, la acción directa abre el de EE.UU. en dólares.
 -   **Análisis por ticker** — Noticias recientes, fecha del próximo balance e historial de resultados, con un resumen redactado por el modelo que configures. Ver [Módulo de análisis](#módulo-de-análisis).
+-   **Calendario de balances** — Los cinco próximos balances de la cartera, en una tarjeta del panel y en una ventana con el detalle (EPS estimado, último balance y sorpresa). Se consulta solo la primera vez de cada día. Ver [Calendario de balances](#calendario-de-balances).
 -   **Cards por broker** — Desglose individual de cada broker con sus propias tablas y subtotales.
 -   **Multi-activo** — Soporta acciones US, acciones argentinas (BYMA, con sufijo `.BA`), CEDEARs, y crypto (BTC/ETH).
 
@@ -90,6 +91,7 @@ Las cuatro variables `LLM_*` se configuran en un archivo `.env` en la raíz (ver
 | cedear_ratio | REAL     | Ratio de conversión CEDEAR               |
 | is_cedear    | INTEGER  | 1 si es CEDEAR                           |
 | is_crypto    | INTEGER  | 1 si es crypto                           |
+| is_adr       | INTEGER  | 1 si es el ADR de una empresa argentina. **No se carga a mano**: se deriva de `ADR_MAP` en cada arranque (ver [Calendario de balances](#calendario-de-balances)) |
 | updated_at   | TEXT     | Última actualización                     |
 
 ### prices
@@ -113,6 +115,18 @@ Caché del módulo de análisis. La clave es el **símbolo resuelto de la empres
 | payload    | TEXT     | Respuesta completa en JSON      |
 | created_at | TEXT     | Timestamp, comparado contra `INSIGHT_TTL_HOURS` |
 
+### earnings
+
+Caché del calendario de balances. Igual que `insights`, la clave es el símbolo resuelto de la empresa, así el CEDEAR de AMD, la acción directa y el ADR de una empresa argentina comparten una sola entrada.
+
+| Columna     | Tipo     | Descripción                     |
+|------------|----------|---------------------------------|
+| symbol     | TEXT PK  | Símbolo resuelto de la empresa  |
+| payload    | TEXT     | Resumen en JSON, o `null` si el símbolo no tiene fecha publicada |
+| fetched_on | TEXT     | Fecha local `YYYY-MM-DD` de la consulta |
+
+Una entrada vale mientras `fetched_on` sea la fecha local de hoy. Los símbolos sin fecha se guardan como `null` en vez de omitirse: si no, los que Yahoo no cubre se volverían a consultar en cada carga de la página, que es justo el costo que el caché evita.
+
 ### Restaurar desde dump
 
 ```bash
@@ -129,6 +143,36 @@ sqlite3 data/portfolio.db < data/portfolio_dump.sql
 | Crypto (Belo)           | BTC, ETH    | -USD (BTC-USD)    | USD    |
 
 Un mismo ticker (ej. `AMD`) puede tener versión directa en un broker y CEDEAR en otro — son instrumentos distintos con precio y moneda distintos, resueltos por `is_cedear` (ver `resolve_yf_symbol()` en `app.py`), no por el ticker solo.
+
+## Calendario de balances
+
+`GET /api/earnings` devuelve los balances más próximos de la cartera, del más cercano al más lejano.
+
+| Parámetro | Default | Efecto                                                        |
+|-----------|---------|---------------------------------------------------------------|
+| `limit`   | 5       | Cuántas filas devuelve. Solo recorta la respuesta: hay que consultar todos los símbolos igual, porque no se sabe cuáles son los más próximos sin preguntarle a cada uno |
+| `refresh` | `false` | `true` ignora el caché del día y vuelve a consultar todo      |
+
+El frontend lo dispara al cargar la página, en paralelo con `/api/portfolio` y no encadenado: la primera consulta del día tarda decenas de segundos (una llamada de red por símbolo) y no debe demorar el panel. El resto del día se responde desde el caché.
+
+Se excluyen la crypto (no tiene balances, ni se consulta) y los símbolos sin fecha publicada, como las acciones puramente de BYMA.
+
+### ADRs — una empresa, un balance
+
+Yahoo responde por las dos cotizaciones de una empresa argentina con la **misma fecha de balance**, con el EPS en la moneda de cada plaza:
+
+```
+PAM      → 2026-08-04, EPS est. 2.52     (USD, NYSE)
+PAMP.BA  → 2026-08-04, EPS est. 145.62   (ARS, BYMA)
+```
+
+Sin agrupar, un mismo balance aparecería dos veces. `ADR_MAP` en `sources.py` mapea el ticker local al del ADR:
+
+```python
+ADR_MAP = {"PAMP": "PAM", "YPFD": "YPF"}
+```
+
+`resolve_insight_symbol()` lo consulta, así ambas tenencias resuelven al mismo símbolo y colapsan en una fila, mostrada con el ticker del ADR. **Agregar un ADR nuevo es una sola línea en ese mapa**: la columna `holdings.is_adr` se deriva de sus valores en cada arranque (`ensure_schema()`), y también se desmarca sola si se saca una entrada. No hay que tocar la base de datos a mano.
 
 ## Módulo de análisis
 

@@ -15,6 +15,10 @@
         .table td { border-color: #1e2d3d; }
         .badge-broker { background: #2d4a6e; color: #a8c8f0; }
         .badge-cedear { background: #6c757d; color: #e9ecef; }
+        .badge-adr { background: #4a5c2d; color: #d8e9b0; }
+        .earnings-card { cursor: pointer; }
+        .earnings-card:hover { border-color: #2d4a6e; }
+        .earnings-soon { color: #facc15; font-weight: 600; }
         .refresh-btn { cursor: pointer; }
         .refresh-btn.spinning { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -56,6 +60,9 @@
         </h3>
         <div>
             <span class="last-updated me-3" id="updateTime"></span>
+            <button class="btn btn-outline-secondary btn-sm me-2" onclick="openEarnings()">
+                &#128197; Balances
+            </button>
             <button class="btn btn-outline-info btn-sm refresh-btn" onclick="refreshPrices()" id="refreshBtn">
                 &#x21bb; Actualizar precios
             </button>
@@ -173,6 +180,18 @@
     </div>
 
     <!-- Broker breakdown cards -->
+    <!-- Upcoming earnings — filled by loadEarnings(), opens the window on click -->
+    <div class="row g-3 mt-2">
+        <div class="col-12">
+            <div class="card earnings-card" onclick="openEarnings()" title="Click para ver el detalle">
+                <div class="card-header">Próximos balances</div>
+                <div class="card-body py-2" id="earningsCard">
+                    <span class="text-secondary">Cargando…</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="row g-3 mt-2" id="brokerCards"></div>
 
     <!-- Insight panel -->
@@ -183,6 +202,20 @@
                 <button class="btn btn-outline-secondary btn-sm" onclick="closeInsight()">Cerrar</button>
             </div>
             <div class="card-body" id="insightContent"></div>
+        </div>
+    </div>
+
+    <!-- Earnings window -->
+    <div id="earningsOverlay" class="insight-overlay" style="display:none" onclick="closeEarnings(event)">
+        <div class="insight-panel" onclick="event.stopPropagation()">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Próximos balances</span>
+                <div>
+                    <button class="btn btn-outline-info btn-sm me-2" onclick="refreshEarnings()">&#x21bb; Actualizar</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="closeEarnings()">Cerrar</button>
+                </div>
+            </div>
+            <div class="card-body" id="earningsContent"></div>
         </div>
     </div>
 
@@ -308,6 +341,108 @@ function openInsight(ticker, isCedear, isCrypto, currency) {
             document.getElementById('insightContent').innerHTML =
                 '<div class="alert alert-danger py-2">No se pudo consultar: ' + escapeHtml(e.message) + '</div>';
         });
+}
+
+let earningsData = null;
+
+// The first load of the day asks Yahoo once per symbol and takes a while;
+// after that the server answers from its cache until the date rolls over.
+function loadEarnings(force) {
+    earningsData = null;
+    renderEarningsCard();
+    renderEarningsWindow();
+    return fetch('/api/earnings' + (force ? '?refresh=true' : ''))
+        .then(function(r) { return r.json(); })
+        .then(function(data) { earningsData = data; })
+        .catch(function(e) {
+            console.error('Error loading earnings:', e);
+            earningsData = { rows: [], error: true };
+        })
+        .then(function() {
+            renderEarningsCard();
+            renderEarningsWindow();
+        });
+}
+
+function daysLabel(days) {
+    if (days == null) return '—';
+    if (days === 0) return 'hoy';
+    return days === 1 ? 'mañana' : 'en ' + days + ' días';
+}
+
+// Reporting within the week is the thing worth noticing at a glance.
+function soonClass(days) {
+    return days != null && days <= 7 ? 'earnings-soon' : '';
+}
+
+function renderEarningsCard() {
+    var el = document.getElementById('earningsCard');
+    if (!earningsData) {
+        el.innerHTML = '<span class="text-secondary">Cargando…</span>';
+        return;
+    }
+    if (earningsData.error) {
+        el.innerHTML = '<span class="text-secondary">No se pudo consultar el calendario.</span>';
+        return;
+    }
+    if (!earningsData.rows.length) {
+        el.innerHTML = '<span class="text-secondary">Sin balances próximos.</span>';
+        return;
+    }
+    el.innerHTML = '<div class="d-flex flex-wrap gap-4">' + earningsData.rows.map(function(r) {
+        return '<div><span class="fw-semibold">' + escapeHtml(r.ticker) + '</span> ' +
+            '<span class="text-secondary">' + escapeHtml(r.next_date) + '</span> ' +
+            '<span class="' + soonClass(r.days_until) + '">(' + daysLabel(r.days_until) + ')</span></div>';
+    }).join('') + '</div>';
+}
+
+function renderEarningsWindow() {
+    var el = document.getElementById('earningsContent');
+    if (!earningsData) {
+        el.innerHTML = '<p class="text-secondary">Consultando calendarios… ' +
+            'la primera vez del día puede tardar un minuto.</p>';
+        return;
+    }
+    if (earningsData.error) {
+        el.innerHTML = '<div class="alert alert-danger py-2">No se pudo consultar el calendario.</div>';
+        return;
+    }
+    if (!earningsData.rows.length) {
+        el.innerHTML = '<p class="text-secondary">Ningún ticker de la cartera tiene fecha de balance publicada.</p>';
+        return;
+    }
+
+    var rows = earningsData.rows.map(function(r) {
+        var surprise = r.last_surprise_pct != null ? r.last_surprise_pct.toFixed(1) + '%' : '—';
+        return '<tr><td class="fw-semibold">' + escapeHtml(r.ticker) + '</td>' +
+            '<td>' + escapeHtml(r.company) + '</td>' +
+            '<td>' + escapeHtml(r.next_date) + '</td>' +
+            '<td class="' + soonClass(r.days_until) + '">' + daysLabel(r.days_until) + '</td>' +
+            '<td class="text-end">' + (r.eps_estimate != null ? r.eps_estimate.toFixed(2) : '—') + '</td>' +
+            '<td>' + escapeHtml(r.last_date || '—') + '</td>' +
+            '<td class="text-end">' + surprise + '</td></tr>';
+    }).join('');
+
+    el.innerHTML = '<table class="table table-sm"><thead><tr>' +
+        '<th>Ticker</th><th>Empresa</th><th>Fecha</th><th>Faltan</th>' +
+        '<th class="text-end">EPS est.</th><th>Último</th><th class="text-end">Sorpresa</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>' +
+        '<p class="text-secondary small mb-0">Calendario consultado el ' +
+        escapeHtml(earningsData.fetched_on) + '.</p>';
+}
+
+function openEarnings() {
+    document.getElementById('earningsOverlay').style.display = 'flex';
+    renderEarningsWindow();
+}
+
+function closeEarnings(evt) {
+    if (evt && evt.target !== document.getElementById('earningsOverlay')) return;
+    document.getElementById('earningsOverlay').style.display = 'none';
+}
+
+function refreshEarnings() {
+    loadEarnings(true);
 }
 
 let lastData = null;
@@ -529,7 +664,8 @@ function renderHoldingsTable() {
     var tbody = document.getElementById('holdingsBody');
     tbody.innerHTML = '';
     rows.forEach(function(h) {
-        var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>' : '';
+        var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>'
+                 : (h.is_adr ? ' <span class="badge badge-adr">ADR</span>' : '');
         var priceStr = h.price > 0
             ? '<span class="value-up">' + formatCurrency(h.price, h.currency) + '</span>'
             : '<span class="value-neutral">—</span>';
@@ -660,6 +796,9 @@ window.addEventListener('DOMContentLoaded', function() {
         });
     });
     loadData();
+    // Fired alongside, not chained: the first calendar of the day takes
+    // tens of seconds and must not hold up the dashboard.
+    loadEarnings(false);
 });
 </script>
 </body>
