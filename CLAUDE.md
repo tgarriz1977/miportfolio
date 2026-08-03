@@ -103,4 +103,5 @@ Schema is documented in `README.md` and materialized in `data/portfolio_dump.sql
 
 - `data/portfolio.db` is tracked in git (it's the live data store for this personal deployment), so a price refresh dirties the working tree. `dump_db.py` (helper for regenerating `portfolio_dump.sql`) is gitignored.
 - `.env` holds real API keys and is gitignored. Yahoo Finance itself is still fetched anonymously.
+- Google retires model names without notice and the error arrives as **HTTP 429 "quota exceeded"** — the retirement message is buried further in the body. If you see a 429 with a valid key, read the full response before assuming it's a quota problem.
 - Design docs for each feature live in `docs/plans/`, with the corresponding implementation plans in `docs/superpowers/plans/`. Worth reading before reworking a feature — they record the trade-offs that were considered and rejected.

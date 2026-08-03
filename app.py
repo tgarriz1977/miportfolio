@@ -410,6 +410,45 @@ def refresh_prices(pairs=None):
     return results, errors
 
 
+def fetch_premarket(holdings):
+    """Premarket price and change for US stocks and their CEDEARs.
+
+    Returns {us_symbol: {pre_price, pre_change_pct}}.  Each US symbol is
+    queried once even when held both directly and as a CEDEAR.  BYMA-only
+    stocks and crypto are skipped — Yahoo has no premarket for them.
+    """
+    symbols_to_query = {}
+    for h in holdings:
+        if h["is_crypto"]:
+            continue
+        if h["is_cedear"]:
+            us_symbol = h["ticker"]
+        else:
+            us_symbol = resolve_yf_symbol(h["ticker"], False)
+        if not us_symbol or us_symbol.endswith(".BA") or "-" in us_symbol:
+            continue
+        symbols_to_query.setdefault(us_symbol, None)
+
+    result = {}
+    for us_symbol in symbols_to_query:
+        try:
+            info = yf.Ticker(us_symbol).info or {}
+        except Exception as exc:
+            log.debug("premarket fetch failed for %s: %s", us_symbol, exc)
+            continue
+        if not info.get("hasPrePostMarketData"):
+            continue
+        state = info.get("marketState", "")
+        pre_price = info.get("preMarketPrice")
+        pre_pct = info.get("preMarketChangePercent")
+        if state == "PRE" and pre_price is not None:
+            result[us_symbol] = {
+                "pre_price": round(pre_price, 2),
+                "pre_change_pct": round(pre_pct, 2) if pre_pct is not None else None,
+            }
+    return result
+
+
 # ── Routes ────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
@@ -426,6 +465,8 @@ def api_portfolio():
         refresh_prices(pairs)
         holdings = get_holdings()
 
+    premarket = fetch_premarket(holdings)
+
     # Build response. Totals are kept per currency, never summed together —
     # a USD balance and an ARS balance aren't the same unit, so adding them
     # would produce a number that doesn't represent real money.
@@ -437,7 +478,7 @@ def api_portfolio():
         if broker not in brokers:
             brokers[broker] = {"holdings": [], "totals": {}}
         value = (h["shares"] or 0) * (h["price"] or 0)
-        brokers[broker]["holdings"].append({
+        entry = {
             "ticker": h["ticker"],
             "company": h["company"] or h["ticker"],
             "shares": h["shares"] or 0,
@@ -449,7 +490,14 @@ def api_portfolio():
             "is_crypto": bool(h["is_crypto"]),
             "is_adr": bool(h["is_adr"]),
             "updated_at": h["recorded_at"] or "—",
-        })
+        }
+        us_symbol = h["ticker"] if h["is_cedear"] else resolve_yf_symbol(h["ticker"], False)
+        pre = premarket.get(us_symbol) if us_symbol else None
+        if pre:
+            entry["pre_change_pct"] = pre["pre_change_pct"]
+            if not h["is_cedear"]:
+                entry["pre_price"] = pre["pre_price"]
+        brokers[broker]["holdings"].append(entry)
         brokers[broker]["totals"][currency] = brokers[broker]["totals"].get(currency, 0) + value
         totals_by_currency[currency] = totals_by_currency.get(currency, 0) + value
 

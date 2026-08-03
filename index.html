@@ -63,6 +63,9 @@
         .total-card { cursor: pointer; user-select: none; }
         .total-card:hover { border-color: #2d4a6e; }
         .total-hidden { letter-spacing: .15em; color: #6c8aa0; }
+        .premarket { font-size: .75rem; color: #6c8aa0; margin-top: .1rem; }
+        .premarket .pre-up { color: #4ade80; }
+        .premarket .pre-down { color: #f87171; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -520,6 +523,17 @@ function formatCurrency(val, cur) {
     return 'US$' + val.toLocaleString('en-US', { minimumFractionDigits: 2 });
 }
 
+function premarketLine(h) {
+    if (h.pre_change_pct == null) return '';
+    var cls = h.pre_change_pct > 0 ? 'pre-up' : (h.pre_change_pct < 0 ? 'pre-down' : '');
+    var sign = h.pre_change_pct > 0 ? '+' : '';
+    var pctStr = '<span class="' + cls + '">' + sign + h.pre_change_pct.toFixed(2) + '%</span>';
+    if (h.pre_price != null) {
+        return '<div class="premarket">Pre: ' + formatCurrency(h.pre_price, h.currency) + ' ' + pctStr + '</div>';
+    }
+    return '<div class="premarket">Pre: ' + pctStr + '</div>';
+}
+
 function getAllHoldings() {
     if (!lastData) return [];
     var flat = [];
@@ -667,6 +681,7 @@ function renderDetailPanel() {
     rows.forEach(function(h) {
         var pct = total > 0 ? (h.value / total * 100) : 0;
         var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
+        priceStr += premarketLine(h);
         var arsVal = h.currency === 'ARS' ? formatCurrency(h.value, 'ARS') : '—';
         var usdVal = h.currency === 'USD' ? formatCurrency(h.value, 'USD') : '—';
         var tr = document.createElement('tr');
@@ -726,6 +741,7 @@ function renderHoldingsTable() {
         var priceStr = h.price > 0
             ? '<span class="value-up">' + formatCurrency(h.price, h.currency) + '</span>'
             : '<span class="value-neutral">—</span>';
+        priceStr += premarketLine(h);
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td>' + tickerLink(h) + cedi + insightButton(h) + '</td>' +
@@ -806,6 +822,7 @@ function render(data) {
         bd.holdings.forEach(function(h) {
             var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
             var priceStr = h.price > 0 ? formatCurrency(h.price, h.currency) : '—';
+            priceStr += premarketLine(h);
             rows += '<tr>' +
                 '<td>' + tickerLink(h) + '</td>' +
                 '<td class="text-end">' + h.shares + '</td>' +
