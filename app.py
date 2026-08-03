@@ -342,12 +342,29 @@ def days_until(date_text, today):
 
 
 # ── Price update ──────────────────────────────────────────────────────
+def _parse_close_series(data, symbol, is_multi):
+    """Extract the Close series for one symbol from a yf.download result."""
+    try:
+        if is_multi and data.columns.nlevels >= 2:
+            close_col = "Adj Close" if "Adj Close" in data.columns.levels[1] else "Close"
+            if (symbol, close_col) in data.columns:
+                return data[(symbol, close_col)].dropna()
+            if (symbol, "Close") in data.columns:
+                return data[(symbol, "Close")].dropna()
+            return None
+        return data.get(symbol, pd.Series(dtype=float)).dropna()
+    except Exception as exc:
+        log.debug("Error parsing %s: %s", symbol, exc)
+        return None
+
+
 def refresh_prices(pairs=None):
     """Fetch latest prices from Yahoo Finance for the given (ticker, is_cedear) pairs."""
     if pairs is None:
         pairs = get_ticker_pairs()
 
     results = {}
+    prev_closes = {}
     errors = []
     symbol_to_pair = {}
     for ticker, is_cedear in pairs:
@@ -357,36 +374,25 @@ def refresh_prices(pairs=None):
 
     yf_symbols = list(symbol_to_pair.keys())
     if not yf_symbols:
-        return results, errors
+        return results, errors, prev_closes
 
     log.info("Refreshing %d symbols via yfinance …", len(yf_symbols))
     try:
-        data = yf.download(yf_symbols, period="1d", progress=False, auto_adjust=True, group_by="ticker")
+        data = yf.download(yf_symbols, period="5d", progress=False, auto_adjust=True, group_by="ticker")
         is_multi = isinstance(data.columns, pd.MultiIndex)
 
         for symbol in yf_symbols:
-            try:
-                if is_multi and data.columns.nlevels >= 2:
-                    close_col = "Adj Close" if "Adj Close" in data.columns.levels[1] else "Close"
-                    if (symbol, close_col) in data.columns:
-                        series = data[(symbol, close_col)].dropna()
-                    elif (symbol, "Close") in data.columns:
-                        series = data[(symbol, "Close")].dropna()
-                    else:
-                        series = None
-                else:
-                    series = data.get(symbol, pd.Series(dtype=float)).dropna()
-
-                price = float(series.iloc[-1]) if series is not None and not series.empty else None
-            except Exception as exc:
-                log.debug("Error parsing %s: %s", symbol, exc)
-                price = None
+            series = _parse_close_series(data, symbol, is_multi)
+            price = float(series.iloc[-1]) if series is not None and not series.empty else None
+            prev = float(series.iloc[-2]) if series is not None and len(series) >= 2 else None
 
             ticker, is_cedear = symbol_to_pair[symbol]
             if price is not None and price > 0:
                 currency = "USD" if ".BA" not in symbol else "ARS"
                 save_price(ticker, is_cedear, price, currency)
                 results[(ticker, is_cedear)] = price
+                if prev is not None and prev > 0:
+                    prev_closes[(ticker, is_cedear)] = prev
             else:
                 errors.append(symbol)
     except Exception as e:
@@ -394,11 +400,15 @@ def refresh_prices(pairs=None):
         for symbol, (ticker, is_cedear) in symbol_to_pair.items():
             try:
                 tk = yf.Ticker(symbol)
-                price = tk.fast_info.last_price
+                fi = tk.fast_info
+                price = fi.last_price
                 if price is not None and price > 0:
                     currency = "USD" if ".BA" not in symbol else "ARS"
                     save_price(ticker, is_cedear, price, currency)
                     results[(ticker, is_cedear)] = price
+                    prev = fi.previous_close
+                    if prev is not None and prev > 0:
+                        prev_closes[(ticker, is_cedear)] = prev
                 else:
                     errors.append(symbol)
             except Exception as e2:
@@ -407,7 +417,7 @@ def refresh_prices(pairs=None):
 
     if errors:
         log.warning("Could not fetch prices for: %s", ", ".join(errors))
-    return results, errors
+    return results, errors, prev_closes
 
 
 def fetch_premarket(holdings):
@@ -460,9 +470,10 @@ def api_portfolio():
     holdings = get_holdings()
     auto_refresh = request.args.get("refresh", "true").lower() == "true"
 
+    prev_closes = {}
     if auto_refresh:
         pairs = list({(h["ticker"], bool(h["is_cedear"])) for h in holdings})
-        refresh_prices(pairs)
+        _, _, prev_closes = refresh_prices(pairs)
         holdings = get_holdings()
 
     premarket = fetch_premarket(holdings)
@@ -497,6 +508,10 @@ def api_portfolio():
             entry["pre_change_pct"] = pre["pre_change_pct"]
             if not h["is_cedear"]:
                 entry["pre_price"] = pre["pre_price"]
+        pair_key = (h["ticker"], bool(h["is_cedear"]))
+        prev = prev_closes.get(pair_key)
+        if prev and entry["price"]:
+            entry["change_pct"] = round((entry["price"] - prev) / prev * 100, 2)
         brokers[broker]["holdings"].append(entry)
         brokers[broker]["totals"][currency] = brokers[broker]["totals"].get(currency, 0) + value
         totals_by_currency[currency] = totals_by_currency.get(currency, 0) + value
@@ -539,13 +554,61 @@ def api_portfolio():
 def api_refresh():
     """Force a price refresh for all holdings."""
     pairs = get_ticker_pairs()
-    results, errors = refresh_prices(pairs)
+    results, errors, _ = refresh_prices(pairs)
     return jsonify({
         "ok": True,
         "updated": [f"{t}.BA" if c else t for (t, c) in results.keys()],
         "failed": errors,
         "count": len(results),
     })
+
+
+@app.route("/api/prices")
+def api_prices():
+    """Current prices and change vs previous close, without DB persistence.
+
+    Designed for frequent polling — one bulk yf.download, no per-symbol calls,
+    no rows written to the prices table.
+    """
+    pairs = get_ticker_pairs()
+    symbol_to_pair = {}
+    for ticker, is_cedear in pairs:
+        symbol = resolve_yf_symbol(ticker, is_cedear)
+        if symbol:
+            symbol_to_pair[symbol] = (ticker, is_cedear)
+
+    yf_symbols = list(symbol_to_pair.keys())
+    if not yf_symbols:
+        return jsonify({"prices": []})
+
+    try:
+        data = yf.download(yf_symbols, period="5d", progress=False,
+                           auto_adjust=True, group_by="ticker")
+    except Exception as exc:
+        log.warning("live price fetch failed: %s", exc)
+        return jsonify({"prices": []})
+
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+    prices = []
+    for symbol in yf_symbols:
+        series = _parse_close_series(data, symbol, is_multi)
+        if series is None or series.empty:
+            continue
+        current = float(series.iloc[-1])
+        prev = float(series.iloc[-2]) if len(series) >= 2 else None
+        if current <= 0:
+            continue
+        change_pct = round((current - prev) / prev * 100, 2) if prev and prev > 0 else None
+        ticker, is_cedear = symbol_to_pair[symbol]
+        currency = "ARS" if ".BA" in symbol else "USD"
+        prices.append({
+            "ticker": ticker,
+            "is_cedear": is_cedear,
+            "price": round(current, 2),
+            "currency": currency,
+            "change_pct": change_pct,
+        })
+    return jsonify({"prices": prices})
 
 
 @app.route("/api/insight/<ticker>")
