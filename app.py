@@ -36,9 +36,9 @@ DEFAULT_EARNINGS_LIMIT = 5
 YF_TICKER_MAP = {
     # BECA Vestiva — US stocks (direct)
     "AMD": "AMD", "AMZN": "AMZN", "AVGO": "AVGO", "GOOG": "GOOG",
-    "INTC": "INTC", "META": "META", "MSFT": "MSFT", "MU": "MU",
-    "NU": "NU", "PLTR": "PLTR", "QCOM": "QCOM", "YPF": "YPF",
-    "VIST": "VIST", "PAM": "PAM",
+    "INTC": "INTC", "JPM": "JPM", "META": "META", "MSFT": "MSFT",
+    "MU": "MU", "NU": "NU", "PLTR": "PLTR", "QCOM": "QCOM",
+    "YPF": "YPF", "VIST": "VIST", "VST": "VST", "PAM": "PAM",
     # TM Inversiones — Argentina stocks on BYMA (.BA)
     "ALUA": "ALUA.BA", "CEPU": "CEPU.BA", "ECOG": "ECOG.BA",
     "PAMP": "PAMP.BA", "TGNO4": "TGNO4.BA", "YPFD": "YPFD.BA",
