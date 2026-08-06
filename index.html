@@ -64,9 +64,9 @@
         .total-card { cursor: pointer; user-select: none; }
         .total-card:hover { border-color: #2d4a6e; }
         .total-hidden { letter-spacing: .15em; color: #6c8aa0; }
-        .premarket { font-size: .75rem; color: #6c8aa0; margin-top: .1rem; }
-        .premarket .pre-up { color: #4ade80; }
-        .premarket .pre-down { color: #f87171; }
+        .extended { font-size: .75rem; color: #6c8aa0; margin-top: .1rem; }
+        .extended .ext-up { color: #4ade80; }
+        .extended .ext-down { color: #f87171; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #15202b; }
         ::-webkit-scrollbar-thumb { background: #1e2d3d; border-radius: 4px; }
@@ -536,15 +536,18 @@ function priceWithChange(h) {
     return '<span class="' + cls + '">' + formatCurrency(h.price, h.currency) + suffix + '</span>';
 }
 
-function premarketLine(h) {
-    if (h.pre_change_pct == null) return '';
-    var cls = h.pre_change_pct > 0 ? 'pre-up' : (h.pre_change_pct < 0 ? 'pre-down' : '');
-    var sign = h.pre_change_pct > 0 ? '+' : '';
-    var pctStr = '<span class="' + cls + '">' + sign + h.pre_change_pct.toFixed(2) + '%</span>';
-    if (h.pre_price != null) {
-        return '<div class="premarket">Pre: ' + formatCurrency(h.pre_price, h.currency) + ' ' + pctStr + '</div>';
+// Premarket or after-hours, whichever session Yahoo reports — never both, so
+// one line serves both and only the label changes.
+function extendedHoursLine(h) {
+    if (h.ext_change_pct == null) return '';
+    var label = h.ext_session === 'post' ? 'Post' : 'Pre';
+    var cls = h.ext_change_pct > 0 ? 'ext-up' : (h.ext_change_pct < 0 ? 'ext-down' : '');
+    var sign = h.ext_change_pct > 0 ? '+' : '';
+    var pctStr = '<span class="' + cls + '">' + sign + h.ext_change_pct.toFixed(2) + '%</span>';
+    if (h.ext_price != null) {
+        return '<div class="extended">' + label + ': ' + formatCurrency(h.ext_price, h.currency) + ' ' + pctStr + '</div>';
     }
-    return '<div class="premarket">Pre: ' + pctStr + '</div>';
+    return '<div class="extended">' + label + ': ' + pctStr + '</div>';
 }
 
 function getAllHoldings() {
@@ -705,7 +708,7 @@ function renderDetailPanel() {
     tbody.innerHTML = '';
     rows.forEach(function(h) {
         var pct = total > 0 ? (h.value / total * 100) : 0;
-        var priceStr = priceWithChange(h) + premarketLine(h);
+        var priceStr = priceWithChange(h) + extendedHoursLine(h);
         var arsVal = h.currency === 'ARS' ? formatCurrency(h.value, 'ARS') : '—';
         var usdVal = h.currency === 'USD' ? formatCurrency(h.value, 'USD') : '—';
         var tr = document.createElement('tr');
@@ -762,7 +765,7 @@ function renderHoldingsTable() {
     rows.forEach(function(h) {
         var cedi = h.is_cedear ? ' <span class="badge badge-cedear">CEDEAR</span>'
                  : (h.is_adr ? ' <span class="badge badge-adr">ADR</span>' : '');
-        var priceStr = priceWithChange(h) + premarketLine(h);
+        var priceStr = priceWithChange(h) + extendedHoursLine(h);
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td>' + tickerLink(h) + cedi + insightButton(h) + '</td>' +
@@ -849,7 +852,7 @@ function renderBrokerCards() {
         var rows = '';
         bd.holdings.forEach(function(h) {
             var pct = totals[h.currency] > 0 ? (h.value / totals[h.currency] * 100) : 0;
-            var priceStr = priceWithChange(h) + premarketLine(h);
+            var priceStr = priceWithChange(h) + extendedHoursLine(h);
             rows += '<tr>' +
                 '<td>' + tickerLink(h) + '</td>' +
                 '<td class="text-end">' + h.shares + '</td>' +

@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 import logging
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -420,12 +421,33 @@ def refresh_prices(pairs=None):
     return results, errors, prev_closes
 
 
-def fetch_premarket(holdings):
-    """Premarket price and change for US stocks and their CEDEARs.
+# How old an extended-hours quote may be before it's treated as stale.  The
+# last after-hours print lands at 20:00 ET and POSTPOST runs until 04:00 ET, so
+# a live quote is never more than 8 hours old and this never fires during the
+# week.  It exists for the weekend: on Saturday morning Friday's print crosses
+# the threshold and stops being shown.  Checking the timestamp rather than the
+# weekday means we don't have to assume what marketState Yahoo reports on a
+# Sunday or a holiday.
+EXTENDED_HOURS_MAX_AGE = 12 * 3600
 
-    Returns {us_symbol: {pre_price, pre_change_pct}}.  Each US symbol is
-    queried once even when held both directly and as a CEDEAR.  BYMA-only
-    stocks and crypto are skipped — Yahoo has no premarket for them.
+# marketState → (session label, .info field prefix).  Yahoo reports exactly one
+# state, so premarket and after-hours can never both apply.  POSTPOST is the
+# overnight lull after the after-hours session closes; Yahoo keeps serving the
+# last post price through it, which is what we want to show all night.
+EXTENDED_HOURS_SESSIONS = {
+    "PRE": ("pre", "preMarket"),
+    "POST": ("post", "postMarket"),
+    "POSTPOST": ("post", "postMarket"),
+}
+
+
+def fetch_extended_hours(holdings):
+    """Premarket / after-hours price and change for US stocks and their CEDEARs.
+
+    Returns {us_symbol: {session, price, change_pct}} where session is "pre" or
+    "post".  Each US symbol is queried once even when held both directly and as
+    a CEDEAR.  BYMA-only stocks and crypto are skipped — Yahoo has no extended
+    session for them.
     """
     symbols_to_query = {}
     for h in holdings:
@@ -439,23 +461,34 @@ def fetch_premarket(holdings):
             continue
         symbols_to_query.setdefault(us_symbol, None)
 
+    now = time.time()
     result = {}
     for us_symbol in symbols_to_query:
         try:
             info = yf.Ticker(us_symbol).info or {}
         except Exception as exc:
-            log.debug("premarket fetch failed for %s: %s", us_symbol, exc)
+            log.debug("extended hours fetch failed for %s: %s", us_symbol, exc)
             continue
         if not info.get("hasPrePostMarketData"):
             continue
-        state = info.get("marketState", "")
-        pre_price = info.get("preMarketPrice")
-        pre_pct = info.get("preMarketChangePercent")
-        if state == "PRE" and pre_price is not None:
-            result[us_symbol] = {
-                "pre_price": round(pre_price, 2),
-                "pre_change_pct": round(pre_pct, 2) if pre_pct is not None else None,
-            }
+        session_field = EXTENDED_HOURS_SESSIONS.get(info.get("marketState", ""))
+        if not session_field:
+            continue
+        session, prefix = session_field
+        price = info.get(prefix + "Price")
+        if price is None:
+            continue
+        # A missing timestamp isn't a reason to hide a quote Yahoo is actively
+        # serving; only an explicitly old one is.
+        stamp = info.get(prefix + "Time")
+        if stamp and now - stamp > EXTENDED_HOURS_MAX_AGE:
+            continue
+        pct = info.get(prefix + "ChangePercent")
+        result[us_symbol] = {
+            "session": session,
+            "price": round(price, 2),
+            "change_pct": round(pct, 2) if pct is not None else None,
+        }
     return result
 
 
@@ -476,7 +509,7 @@ def api_portfolio():
         _, _, prev_closes = refresh_prices(pairs)
         holdings = get_holdings()
 
-    premarket = fetch_premarket(holdings)
+    extended = fetch_extended_hours(holdings)
 
     # Build response. Totals are kept per currency, never summed together —
     # a USD balance and an ARS balance aren't the same unit, so adding them
@@ -503,11 +536,14 @@ def api_portfolio():
             "updated_at": h["recorded_at"] or "—",
         }
         us_symbol = h["ticker"] if h["is_cedear"] else resolve_yf_symbol(h["ticker"], False)
-        pre = premarket.get(us_symbol) if us_symbol else None
-        if pre:
-            entry["pre_change_pct"] = pre["pre_change_pct"]
+        ext = extended.get(us_symbol) if us_symbol else None
+        if ext:
+            entry["ext_session"] = ext["session"]
+            entry["ext_change_pct"] = ext["change_pct"]
+            # A CEDEAR gets the percentage only: the underlying trades in USD
+            # and that figure under an ARS holding reads as a currency error.
             if not h["is_cedear"]:
-                entry["pre_price"] = pre["pre_price"]
+                entry["ext_price"] = ext["price"]
         pair_key = (h["ticker"], bool(h["is_cedear"]))
         prev = prev_closes.get(pair_key)
         if prev and entry["price"]:
